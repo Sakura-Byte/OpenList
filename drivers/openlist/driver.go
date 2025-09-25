@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -18,11 +17,13 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 type OpenList struct {
 	model.Storage
 	Addition
+	limiter *rate.Limiter
 }
 
 func (d *OpenList) Config() driver.Config {
@@ -35,8 +36,11 @@ func (d *OpenList) GetAddition() driver.Additional {
 
 func (d *OpenList) Init(ctx context.Context) error {
 	d.Addition.Address = strings.TrimSuffix(d.Addition.Address, "/")
+	if d.LimitRate > 0 {
+		d.limiter = rate.NewLimiter(rate.Limit(d.LimitRate), 1)
+	}
 	var resp common.Resp[MeResp]
-	_, _, err := d.request("/me", http.MethodGet, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/me", http.MethodGet, func(req *resty.Request) {
 		req.SetResult(&resp)
 	})
 	if err != nil {
@@ -44,27 +48,9 @@ func (d *OpenList) Init(ctx context.Context) error {
 	}
 	// if the username is not empty and the username is not the same as the current username, then login again
 	if d.Username != resp.Data.Username {
-		err = d.login()
+		err = d.login(ctx)
 		if err != nil {
 			return err
-		}
-	}
-	// re-get the user info
-	_, _, err = d.request("/me", http.MethodGet, func(req *resty.Request) {
-		req.SetResult(&resp)
-	})
-	if err != nil {
-		return err
-	}
-	if resp.Data.Role == model.GUEST {
-		u := d.Address + "/api/public/settings"
-		res, err := base.RestyClient.R().Get(u)
-		if err != nil {
-			return err
-		}
-		allowMounted := utils.Json.Get(res.Body(), "data", conf.AllowMounted).ToString() == "true"
-		if !allowMounted {
-			return fmt.Errorf("the site does not allow mounted")
 		}
 	}
 	return err
@@ -74,9 +60,16 @@ func (d *OpenList) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (d *OpenList) WaitLimit(ctx context.Context) error {
+	if d.limiter != nil {
+		return d.limiter.Wait(ctx)
+	}
+	return nil
+}
+
 func (d *OpenList) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	var resp common.Resp[FsListResp]
-	_, _, err := d.request("/fs/list", http.MethodPost, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/fs/list", http.MethodPost, func(req *resty.Request) {
 		req.SetResult(&resp).SetBody(ListReq{
 			PageReq: model.PageReq{
 				Page:    1,
@@ -118,7 +111,7 @@ func (d *OpenList) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 			userAgent = base.UserAgent
 		}
 	}
-	_, _, err := d.request("/fs/get", http.MethodPost, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/fs/get", http.MethodPost, func(req *resty.Request) {
 		req.SetResult(&resp).SetBody(FsGetReq{
 			Path:     file.GetPath(),
 			Password: d.MetaPassword,
@@ -133,7 +126,7 @@ func (d *OpenList) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 }
 
 func (d *OpenList) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	_, _, err := d.request("/fs/mkdir", http.MethodPost, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/fs/mkdir", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(MkdirOrLinkReq{
 			Path: path.Join(parentDir.GetPath(), dirName),
 		})
@@ -142,7 +135,7 @@ func (d *OpenList) MakeDir(ctx context.Context, parentDir model.Obj, dirName str
 }
 
 func (d *OpenList) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	_, _, err := d.request("/fs/move", http.MethodPost, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/fs/move", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(MoveCopyReq{
 			SrcDir: path.Dir(srcObj.GetPath()),
 			DstDir: dstDir.GetPath(),
@@ -153,7 +146,7 @@ func (d *OpenList) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *OpenList) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	_, _, err := d.request("/fs/rename", http.MethodPost, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/fs/rename", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(RenameReq{
 			Path: srcObj.GetPath(),
 			Name: newName,
@@ -163,7 +156,7 @@ func (d *OpenList) Rename(ctx context.Context, srcObj model.Obj, newName string)
 }
 
 func (d *OpenList) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	_, _, err := d.request("/fs/copy", http.MethodPost, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/fs/copy", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(MoveCopyReq{
 			SrcDir: path.Dir(srcObj.GetPath()),
 			DstDir: dstDir.GetPath(),
@@ -174,7 +167,7 @@ func (d *OpenList) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 }
 
 func (d *OpenList) Remove(ctx context.Context, obj model.Obj) error {
-	_, _, err := d.request("/fs/remove", http.MethodPost, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/fs/remove", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(RemoveReq{
 			Dir:   path.Dir(obj.GetPath()),
 			Names: []string{obj.GetName()},
@@ -224,7 +217,7 @@ func (d *OpenList) Put(ctx context.Context, dstDir model.Obj, s model.FileStream
 	code := utils.Json.Get(bytes, "code").ToInt()
 	if code != 200 {
 		if code == 401 || code == 403 {
-			err = d.login()
+			err = d.login(ctx)
 			if err != nil {
 				return err
 			}
@@ -239,7 +232,7 @@ func (d *OpenList) GetArchiveMeta(ctx context.Context, obj model.Obj, args model
 		return nil, errs.NotImplement
 	}
 	var resp common.Resp[ArchiveMetaResp]
-	_, code, err := d.request("/fs/archive/meta", http.MethodPost, func(req *resty.Request) {
+	_, code, err := d.request(ctx, "/fs/archive/meta", http.MethodPost, func(req *resty.Request) {
 		req.SetResult(&resp).SetBody(ArchiveMetaReq{
 			ArchivePass: args.Password,
 			Password:    d.MetaPassword,
@@ -272,7 +265,7 @@ func (d *OpenList) ListArchive(ctx context.Context, obj model.Obj, args model.Ar
 		return nil, errs.NotImplement
 	}
 	var resp common.Resp[ArchiveListResp]
-	_, code, err := d.request("/fs/archive/list", http.MethodPost, func(req *resty.Request) {
+	_, code, err := d.request(ctx, "/fs/archive/list", http.MethodPost, func(req *resty.Request) {
 		req.SetResult(&resp).SetBody(ArchiveListReq{
 			ArchiveMetaReq: ArchiveMetaReq{
 				ArchivePass: args.Password,
@@ -316,7 +309,7 @@ func (d *OpenList) Extract(ctx context.Context, obj model.Obj, args model.Archiv
 		return nil, errs.NotSupport
 	}
 	var resp common.Resp[ArchiveMetaResp]
-	_, _, err := d.request("/fs/archive/meta", http.MethodPost, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/fs/archive/meta", http.MethodPost, func(req *resty.Request) {
 		req.SetResult(&resp).SetBody(ArchiveMetaReq{
 			ArchivePass: args.Password,
 			Password:    d.MetaPassword,
@@ -341,7 +334,7 @@ func (d *OpenList) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.O
 		return errs.NotImplement
 	}
 	dir, name := path.Split(srcObj.GetPath())
-	_, _, err := d.request("/fs/archive/decompress", http.MethodPost, func(req *resty.Request) {
+	_, _, err := d.request(ctx, "/fs/archive/decompress", http.MethodPost, func(req *resty.Request) {
 		req.SetBody(DecompressReq{
 			ArchivePass:   args.Password,
 			CacheFull:     args.CacheFull,
