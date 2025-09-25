@@ -23,7 +23,7 @@
 ## Install
 
 ```
-curl -fsSL https://raw.githubusercontent.com/Sakura-Byte/OpenList/refs/heads/main/build.sh > install-openlist-v4.sh && sudo bash install-openlist-v4.sh
+curl -fsSL hhttps://raw.githubusercontent.com/Sakura-Byte/OpenList/refs/heads/main/install.sh > install-openlist-v4.sh && sudo bash install-openlist-v4.sh
 ```
 
 ## Disclaimer
