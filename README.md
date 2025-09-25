@@ -20,6 +20,12 @@
 - [CODE OF CONDUCT](./CODE_OF_CONDUCT.md)
 - [LICENSE](./LICENSE)
 
+## Install
+
+```
+curl -fsSL https://raw.githubusercontent.com/Sakura-Byte/OpenList/refs/heads/main/build.sh > install-openlist-v4.sh && sudo bash install-openlist-v4.sh
+```
+
 ## Disclaimer
 
 OpenList is an open-source project independently maintained by the OpenList Team, following the AGPL-3.0 license and committed to maintaining complete code openness and modification transparency.
