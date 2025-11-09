@@ -206,4 +206,34 @@ func (d *OnedriveAPP) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 	return err
 }
 
+func (d *OnedriveAPP) GetDetails(ctx context.Context) (*model.StorageDetails, error) {
+	if d.DisableDiskUsage {
+		return nil, errs.NotImplement
+	}
+	drive, err := d.getDrive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &model.StorageDetails{
+		DiskUsage: model.DiskUsage{
+			TotalSpace: drive.Quota.Total,
+			FreeSpace:  drive.Quota.Remaining,
+		},
+	}, nil
+}
+
+func (d *OnedriveAPP) GetDirectUploadTools() []string {
+	if !d.EnableDirectUpload {
+		return nil
+	}
+	return []string{"HttpDirect"}
+}
+
+func (d *OnedriveAPP) GetDirectUploadInfo(ctx context.Context, _ string, dstDir model.Obj, fileName string, _ int64) (any, error) {
+	if !d.EnableDirectUpload {
+		return nil, errs.NotImplement
+	}
+	return d.getDirectUploadInfo(ctx, path.Join(dstDir.GetPath(), fileName))
+}
+
 var _ driver.Driver = (*OnedriveAPP)(nil)

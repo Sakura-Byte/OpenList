@@ -133,7 +133,10 @@ func (d *Onedrive) _refreshToken() error {
 	return nil
 }
 
-func (d *Onedrive) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
+func (d *Onedrive) Request(url string, method string, callback base.ReqCallback, resp interface{}, noRetry ...bool) ([]byte, error) {
+	if d.ref != nil {
+		return d.ref.Request(url, method, callback, resp)
+	}
 	req := base.RestyClient.R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	if callback != nil {
@@ -149,7 +152,7 @@ func (d *Onedrive) Request(url string, method string, callback base.ReqCallback,
 		return nil, err
 	}
 	if e.Error.Code != "" {
-		if e.Error.Code == "InvalidAuthenticationToken" {
+		if e.Error.Code == "InvalidAuthenticationToken" && !utils.IsBool(noRetry...) {
 			err = d.refreshToken()
 			if err != nil {
 				return nil, err
@@ -294,4 +297,49 @@ func (d *Onedrive) upBig(ctx context.Context, dstDir model.Obj, stream model.Fil
 		up(float64(finish) * 100 / float64(stream.GetSize()))
 	}
 	return nil
+}
+
+func (d *Onedrive) getDrive(ctx context.Context) (*DriveResp, error) {
+	var api string
+	host, _ := onedriveHostMap[d.Region]
+	if d.IsSharepoint {
+		api = fmt.Sprintf("%s/v1.0/sites/%s/drive", host.Api, d.SiteId)
+	} else {
+		api = fmt.Sprintf("%s/v1.0/me/drive", host.Api)
+	}
+	var resp DriveResp
+	_, err := d.Request(api, http.MethodGet, func(req *resty.Request) {
+		req.SetContext(ctx)
+	}, &resp, true)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (d *Onedrive) getDirectUploadInfo(ctx context.Context, path string) (*model.HttpDirectUploadInfo, error) {
+	// Create upload session
+	url := d.GetMetaUrl(false, path) + "/createUploadSession"
+	metadata := map[string]any{
+		"item": map[string]any{
+			"@microsoft.graph.conflictBehavior": "rename",
+		},
+	}
+
+	res, err := d.Request(url, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(metadata).SetContext(ctx)
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	uploadUrl := jsoniter.Get(res, "uploadUrl").ToString()
+	if uploadUrl == "" {
+		return nil, fmt.Errorf("failed to get upload URL from response")
+	}
+	return &model.HttpDirectUploadInfo{
+		UploadURL: uploadUrl,
+		ChunkSize: d.ChunkSize * 1024 * 1024, // Convert MB to bytes
+		Method:    "PUT",
+	}, nil
 }
