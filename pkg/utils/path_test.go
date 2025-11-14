@@ -51,3 +51,24 @@ func TestGetPathHierarchy(t *testing.T) {
 		})
 	}
 }
+
+func TestRelativePath(t *testing.T) {
+	cases := []struct {
+		base   string
+		target string
+		want   string
+	}{
+		{"/", "/a/b", "a/b"},
+		{"/a", "/a/b/c", "b/c"},
+		{"/a/b", "/a/b", ""},
+		{"/a/b", "/a/b/c", "c"},
+		{"/a/b", "/a/bc", "/a/bc"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.base+"_"+tc.target, func(t *testing.T) {
+			if got := RelativePath(tc.base, tc.target); got != tc.want {
+				t.Fatalf("RelativePath(%q, %q) = %q, want %q", tc.base, tc.target, got, tc.want)
+			}
+		})
+	}
+}

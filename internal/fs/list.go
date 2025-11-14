@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	stdpath "path"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -41,6 +42,16 @@ func list(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error)
 	om := model.NewObjMerge()
 	if whetherHide(user, meta, path) {
 		om.InitHideReg(meta.Hide)
+		metaPath := meta.Path
+		currentPath := path
+		om.SetHideTargetFunc(func(obj model.Obj) []string {
+			fullPath := stdpath.Join(currentPath, obj.GetName())
+			rel := utils.RelativePath(metaPath, fullPath)
+			if rel == "" {
+				return nil
+			}
+			return []string{rel, "/" + rel}
+		})
 	}
 	objs := om.Merge(_objs, virtualFiles...)
 	return objs, nil

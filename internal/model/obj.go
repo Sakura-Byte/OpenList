@@ -203,8 +203,9 @@ func NewObjMerge() *ObjMerge {
 }
 
 type ObjMerge struct {
-	regs []*regexp2.Regexp
-	set  mapset.Set[string]
+	regs           []*regexp2.Regexp
+	set            mapset.Set[string]
+	hideTargetFunc func(Obj) []string
 }
 
 func (om *ObjMerge) Merge(objs []Obj, objs_ ...Obj) []Obj {
@@ -223,10 +224,8 @@ func (om *ObjMerge) insertObjs(objs []Obj, objs_ ...Obj) []Obj {
 }
 
 func (om *ObjMerge) clickObj(obj Obj) bool {
-	for _, reg := range om.regs {
-		if isMatch, _ := reg.MatchString(obj.GetName()); isMatch {
-			return false
-		}
+	if om.shouldHide(obj) {
+		return false
 	}
 	return om.set.Add(obj.GetName())
 }
@@ -239,6 +238,33 @@ func (om *ObjMerge) InitHideReg(hides string) {
 	}
 }
 
+func (om *ObjMerge) SetHideTargetFunc(fn func(Obj) []string) {
+	om.hideTargetFunc = fn
+}
+
 func (om *ObjMerge) Reset() {
 	om.set.Clear()
+}
+
+func (om *ObjMerge) shouldHide(obj Obj) bool {
+	if len(om.regs) == 0 {
+		return false
+	}
+	targets := []string{obj.GetName()}
+	if om.hideTargetFunc != nil {
+		if extra := om.hideTargetFunc(obj); len(extra) > 0 {
+			targets = append(targets, extra...)
+		}
+	}
+	for _, reg := range om.regs {
+		for _, target := range targets {
+			if target == "" {
+				continue
+			}
+			if isMatch, _ := reg.MatchString(target); isMatch {
+				return true
+			}
+		}
+	}
+	return false
 }

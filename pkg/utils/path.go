@@ -83,6 +83,24 @@ func JoinBasePath(basePath, reqPath string) (string, error) {
 	return stdpath.Join(FixAndCleanPath(basePath), reqPath), nil
 }
 
+// RelativePath returns the cleaned path of target relative to base.
+// If target is not under base, the cleaned target path is returned.
+func RelativePath(base, target string) string {
+	base = FixAndCleanPath(base)
+	target = FixAndCleanPath(target)
+	if base == target {
+		return ""
+	}
+	if base == "/" {
+		return strings.TrimPrefix(target, "/")
+	}
+	prefix := PathAddSeparatorSuffix(base)
+	if strings.HasPrefix(target, prefix) {
+		return strings.TrimPrefix(target, prefix)
+	}
+	return target
+}
+
 func GetFullPath(mountPath, path string) string {
 	return stdpath.Join(GetActualMountPath(mountPath), path)
 }

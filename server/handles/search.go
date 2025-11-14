@@ -54,11 +54,20 @@ func Search(c *gin.Context) {
 		if !strings.HasPrefix(node.Parent, user.BasePath) {
 			continue
 		}
-		meta, err := op.GetNearestMeta(node.Parent)
+		fullPath := path.Join(node.Parent, node.Name)
+
+		parentMeta, err := op.GetNearestMeta(node.Parent)
 		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			continue
 		}
-		if !common.CanAccess(user, meta, path.Join(node.Parent, node.Name), req.Password) {
+		if !common.CanAccess(user, parentMeta, fullPath, req.Password) {
+			continue
+		}
+		if nodeMeta, err := op.GetMetaByPath(fullPath); err == nil {
+			if !common.CanAccess(user, nodeMeta, fullPath, req.Password) {
+				continue
+			}
+		} else if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			continue
 		}
 		filteredNodes = append(filteredNodes, node)
