@@ -33,25 +33,12 @@ func IsApply(metaPath, reqPath string, applySub bool) bool {
 
 func CanAccess(user *model.User, meta *model.Meta, reqPath string, password string) bool {
 	// if the reqPath is in hide (only can check the nearest meta) and user can't see hides, can't access
-	if meta != nil && !user.CanSeeHides() && meta.Hide != "" {
-		parent := path.Dir(reqPath)
-		if IsApply(meta.Path, parent, meta.HSub) { // the meta should apply to the parent of current path
-			baseName := path.Base(reqPath)
-			relativePath := utils.RelativePath(meta.Path, reqPath)
-			hideTargets := []string{baseName}
-			if relativePath != "" {
-				hideTargets = append(hideTargets, relativePath, "/"+relativePath)
-			}
-			for _, hide := range strings.Split(meta.Hide, "\n") {
-				re := regexp2.MustCompile(hide, regexp2.None)
-				for _, target := range hideTargets {
-					if target == "" {
-						continue
-					}
-					if isMatch, _ := re.MatchString(target); isMatch {
-						return false
-					}
-				}
+	if meta != nil && !user.CanSeeHides() && meta.Hide != "" &&
+		IsApply(meta.Path, path.Dir(reqPath), meta.HSub) { // the meta should apply to the parent of current path
+		for _, hide := range strings.Split(meta.Hide, "\n") {
+			re := regexp2.MustCompile(hide, regexp2.None)
+			if isMatch, _ := re.MatchString(path.Base(reqPath)); isMatch {
+				return false
 			}
 		}
 	}

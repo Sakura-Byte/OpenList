@@ -1,22 +1,24 @@
 package common
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/model"
-)
-
-func TestCanAccessHideRelativePath(t *testing.T) {
-	user := &model.User{}
-	meta := &model.Meta{
-		Path: "/a",
-		Hide: "c.+",
-		HSub: true,
+func TestIsApply(t *testing.T) {
+	datas := []struct {
+		metaPath string
+		reqPath  string
+		applySub bool
+		result   bool
+	}{
+		{
+			metaPath: "/",
+			reqPath:  "/test",
+			applySub: true,
+			result:   true,
+		},
 	}
-	if CanAccess(user, meta, "/a/b/cdef/gghh", "") {
-		t.Fatalf("expected hide pattern to block access to nested path")
-	}
-	if !CanAccess(user, meta, "/a/b/other", "") {
-		t.Fatalf("expected unmatched path to stay accessible")
+	for i, data := range datas {
+		if IsApply(data.metaPath, data.reqPath, data.applySub) != data.result {
+			t.Errorf("TestIsApply %d failed", i)
+		}
 	}
 }
