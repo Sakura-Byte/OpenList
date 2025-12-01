@@ -4,10 +4,18 @@ import (
 	"context"
 	"path"
 	"path/filepath"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	log "github.com/sirupsen/logrus"
+)
+
+const (
+	walkListRetryAttempts = 10
+	walkListRetryDelay    = 200 * time.Millisecond
+	walkListMaxBackoff    = 5 * time.Second
 )
 
 // WalkFS traverses filesystem fs starting at name up to depth levels.
@@ -29,7 +37,7 @@ func WalkFS(ctx context.Context, depth int, name string, info model.Obj, walkFn 
 	}
 	meta, _ := op.GetNearestMeta(name)
 	// Read directory names.
-	objs, err := List(context.WithValue(ctx, conf.MetaKey, meta), name, &ListArgs{})
+	objs, err := walkListWithRetry(context.WithValue(ctx, conf.MetaKey, meta), name, &ListArgs{})
 	if err != nil {
 		return walkFnErr
 	}
@@ -43,4 +51,29 @@ func WalkFS(ctx context.Context, depth int, name string, info model.Obj, walkFn 
 		}
 	}
 	return nil
+}
+
+func walkListWithRetry(ctx context.Context, name string, args *ListArgs) ([]model.Obj, error) {
+	var lastErr error
+	for attempt := 1; attempt <= walkListRetryAttempts; attempt++ {
+		objs, err := List(ctx, name, args)
+		if err == nil {
+			return objs, nil
+		}
+		lastErr = err
+		log.Warnf("walk list %s failed on attempt %d/%d: %+v", name, attempt, walkListRetryAttempts, err)
+		if attempt == walkListRetryAttempts {
+			break
+		}
+		backoff := time.Duration(1<<(attempt-1)) * walkListRetryDelay
+		if backoff > walkListMaxBackoff {
+			backoff = walkListMaxBackoff
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+	return nil, lastErr
 }
