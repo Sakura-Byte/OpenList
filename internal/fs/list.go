@@ -2,7 +2,6 @@ package fs
 
 import (
 	"context"
-	stdpath "path"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
