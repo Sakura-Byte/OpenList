@@ -203,9 +203,8 @@ func NewObjMerge() *ObjMerge {
 }
 
 type ObjMerge struct {
-	regs       []*regexp2.Regexp
-	set        mapset.Set[string]
-	hideTarget func(Obj) []string
+	regs []*regexp2.Regexp
+	set  mapset.Set[string]
 }
 
 func (om *ObjMerge) Merge(objs []Obj, objs_ ...Obj) []Obj {
@@ -224,17 +223,9 @@ func (om *ObjMerge) insertObjs(objs []Obj, objs_ ...Obj) []Obj {
 }
 
 func (om *ObjMerge) clickObj(obj Obj) bool {
-	targets := []string{obj.GetName()}
-	if om.hideTarget != nil {
-		if alt := om.hideTarget(obj); len(alt) != 0 {
-			targets = alt
-		}
-	}
 	for _, reg := range om.regs {
-		for _, target := range targets {
-			if isMatch, _ := reg.MatchString(target); isMatch {
-				return false
-			}
+		if isMatch, _ := reg.MatchString(obj.GetName()); isMatch {
+			return false
 		}
 	}
 	return om.set.Add(obj.GetName())
@@ -250,8 +241,4 @@ func (om *ObjMerge) InitHideReg(hides string) {
 
 func (om *ObjMerge) Reset() {
 	om.set.Clear()
-}
-
-func (om *ObjMerge) SetHideTargetFunc(fn func(Obj) []string) {
-	om.hideTarget = fn
 }
