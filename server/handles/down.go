@@ -57,8 +57,9 @@ func Proxy(c *gin.Context) {
 		return
 	}
 	if canProxy(storage, filename) {
+		user, _ := c.Request.Context().Value(conf.UserKey).(*model.User)
 		if _, ok := c.GetQuery("d"); !ok {
-			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath); url != "" {
+			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath, user); url != "" {
 				c.Redirect(302, url)
 				return
 			}

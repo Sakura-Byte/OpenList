@@ -221,7 +221,7 @@ func SharingDown(c *gin.Context) {
 	}
 	if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, stdpath.Base(actualPath)) {
 		if _, ok := c.GetQuery("d"); !ok {
-			if url := common.GenerateDownProxyURL(storage.GetStorage(), unwrapPath); url != "" {
+			if url := common.GenerateDownProxyURL(storage.GetStorage(), unwrapPath, nil); url != "" {
 				c.Redirect(302, url)
 				_ = countAccess(c.ClientIP(), s)
 				return

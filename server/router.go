@@ -4,6 +4,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/message"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -43,12 +45,15 @@ func Init(e *gin.Engine) {
 	S3(g.Group("/s3"))
 
 	downloadLimiter := middlewares.DownloadRateLimiter(stream.ClientDownloadLimit)
-	signCheck := middlewares.Down(sign.Verify)
-	g.GET("/d/*path", middlewares.PathParse, signCheck, downloadLimiter, handles.Down)
-	g.GET("/p/*path", middlewares.PathParse, signCheck, downloadLimiter, handles.Proxy)
+	signCheck := middlewares.Down(sign.VerifyDownload)
+	rpsDownload := middlewares.UserRateLimit(ratelimit.RequestKindDownload)
+	g.GET("/d/*path", middlewares.PathParse, signCheck, rpsDownload, downloadLimiter, handles.Down)
+	g.GET("/p/*path", middlewares.PathParse, signCheck, rpsDownload, downloadLimiter, handles.Proxy)
 	g.HEAD("/d/*path", middlewares.PathParse, signCheck, handles.Down)
 	g.HEAD("/p/*path", middlewares.PathParse, signCheck, handles.Proxy)
-	archiveSignCheck := middlewares.Down(sign.VerifyArchive)
+	archiveSignCheck := middlewares.Down(func(path, token string) (*model.User, error) {
+		return nil, sign.VerifyArchive(path, token)
+	})
 	g.GET("/ad/*path", middlewares.PathParse, archiveSignCheck, downloadLimiter, handles.ArchiveDown)
 	g.GET("/ap/*path", middlewares.PathParse, archiveSignCheck, downloadLimiter, handles.ArchiveProxy)
 	g.GET("/ae/*path", middlewares.PathParse, archiveSignCheck, downloadLimiter, handles.ArchiveInternalExtract)
@@ -187,11 +192,11 @@ func admin(g *gin.RouterGroup) {
 }
 
 func fsAndShare(g *gin.RouterGroup) {
-	g.Any("/list", handles.FsListSplit)
-	g.Any("/get", handles.FsGetSplit)
+	g.Any("/list", middlewares.UserRateLimit(ratelimit.RequestKindList), handles.FsListSplit)
+	g.Any("/get", middlewares.UserRateLimit(ratelimit.RequestKindDownload), handles.FsGetSplit)
 	a := g.Group("/archive")
-	a.Any("/meta", handles.FsArchiveMetaSplit)
-	a.Any("/list", handles.FsArchiveListSplit)
+	a.Any("/meta", middlewares.UserRateLimit(ratelimit.RequestKindList), handles.FsArchiveMetaSplit)
+	a.Any("/list", middlewares.UserRateLimit(ratelimit.RequestKindList), handles.FsArchiveListSplit)
 }
 
 func _fs(g *gin.RouterGroup) {

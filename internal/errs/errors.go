@@ -12,6 +12,8 @@ var (
 	NotSupport   = errors.New("not support")
 	RelativePath = errors.New("using relative path is not allowed")
 
+	ExceedUserRateLimit = errors.New("user rate limit exceeded")
+
 	UploadNotSupported = errors.New("upload not supported")
 	MetaNotFound       = errors.New("meta not found")
 	StorageNotFound    = errors.New("storage not found")

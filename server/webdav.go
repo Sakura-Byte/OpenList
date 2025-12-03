@@ -13,6 +13,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/server/webdav"
 	"github.com/gin-gonic/gin"
@@ -142,6 +143,20 @@ func WebDAVAuth(c *gin.Context) {
 		c.Status(http.StatusForbidden)
 		c.Abort()
 		return
+	}
+	switch c.Request.Method {
+	case http.MethodGet, http.MethodHead:
+		if err := ratelimit.Allow(c.Request.Context(), user, ratelimit.RequestKindDownload); err != nil {
+			c.Status(http.StatusTooManyRequests)
+			c.Abort()
+			return
+		}
+	case "PROPFIND":
+		if err := ratelimit.Allow(c.Request.Context(), user, ratelimit.RequestKindList); err != nil {
+			c.Status(http.StatusTooManyRequests)
+			c.Abort()
+			return
+		}
 	}
 	common.GinWithValue(c, conf.UserKey, user)
 	c.Next()

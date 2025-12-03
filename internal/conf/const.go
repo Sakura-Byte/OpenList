@@ -157,6 +157,10 @@ const (
 	StreamMaxClientUploadSpeed            = "max_client_upload_speed"
 	StreamMaxServerDownloadSpeed          = "max_server_download_speed"
 	StreamMaxServerUploadSpeed            = "max_server_upload_speed"
+	UserDefaultDownloadRPS                = "default_download_rps"
+	UserDefaultListRPS                    = "default_list_rps"
+	GuestDownloadRPS                      = "guest_download_rps"
+	GuestListRPS                          = "guest_list_rps"
 )
 
 const (

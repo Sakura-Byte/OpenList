@@ -55,10 +55,12 @@ type User struct {
 	//   12: can read archives
 	//   13: can decompress archives
 	//   14: can share
-	Permission int32  `json:"permission"`
-	OtpSecret  string `json:"-"`
-	SsoID      string `json:"sso_id"` // unique by sso platform
-	Authn      string `gorm:"type:text" json:"-"`
+	Permission  int32    `json:"permission"`
+	DownloadRPS *float64 `json:"download_rps" gorm:"default:null"`
+	ListRPS     *float64 `json:"list_rps" gorm:"default:null"`
+	OtpSecret   string   `json:"-"`
+	SsoID       string   `json:"sso_id"` // unique by sso platform
+	Authn       string   `gorm:"type:text" json:"-"`
 }
 
 func (u *User) IsGuest() bool {

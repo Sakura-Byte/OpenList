@@ -6,6 +6,7 @@ import (
 	"runtime"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/OpenList/v4/server/middlewares"
@@ -17,7 +18,9 @@ func _pprof(g *gin.RouterGroup) {
 }
 
 func debug(g *gin.RouterGroup) {
-	g.GET("/path/*path", middlewares.Down(sign.Verify), func(c *gin.Context) {
+	g.GET("/path/*path", middlewares.Down(func(path, token string) (*model.User, error) {
+		return nil, sign.Verify(path, token)
+	}), func(c *gin.Context) {
 		rawPath := c.Request.Context().Value(conf.PathKey).(string)
 		c.JSON(200, gin.H{
 			"path": rawPath,

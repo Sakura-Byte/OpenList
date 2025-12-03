@@ -398,7 +398,7 @@ func Link(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	//user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
 	//rawPath := stdpath.Join(user.BasePath, req.Path)
 	// why need not join base_path? because it's always the full path
 	rawPath := req.Path
@@ -412,7 +412,7 @@ func Link(c *gin.Context) {
 			URL: fmt.Sprintf("%s/p%s?d&sign=%s",
 				common.GetApiUrl(c),
 				utils.EncodePath(rawPath, true),
-				sign.Sign(rawPath)),
+				sign.SignDownload(user, rawPath)),
 		})
 		return
 	}

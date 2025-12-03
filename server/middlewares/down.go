@@ -21,7 +21,7 @@ func PathParse(c *gin.Context) {
 	c.Next()
 }
 
-func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
+func Down(verifyFunc func(string, string) (*model.User, error)) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		rawPath := c.Request.Context().Value(conf.PathKey).(string)
 		meta, err := op.GetNearestMeta(rawPath)
@@ -35,11 +35,24 @@ func Down(verifyFunc func(string, string) error) func(c *gin.Context) {
 		// verify sign
 		if needSign(meta, rawPath) {
 			s := c.Query("sign")
-			err = verifyFunc(rawPath, strings.TrimSuffix(s, "/"))
+			user, verr := verifyFunc(rawPath, strings.TrimSuffix(s, "/"))
+			if verr == nil && user == nil {
+				user, _ = op.GetGuest()
+			}
+			if verr == nil && user != nil {
+				common.GinWithValue(c, conf.UserKey, user)
+			}
+			err = verr
 			if err != nil {
 				common.ErrorPage(c, err, 401)
 				c.Abort()
 				return
+			}
+		}
+		// ensure user context exists for rate limiting even when no sign is needed
+		if _, ok := c.Request.Context().Value(conf.UserKey).(*model.User); !ok {
+			if guest, gerr := op.GetGuest(); gerr == nil {
+				common.GinWithValue(c, conf.UserKey, guest)
 			}
 		}
 		c.Next()

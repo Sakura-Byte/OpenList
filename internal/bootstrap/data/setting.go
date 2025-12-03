@@ -241,6 +241,10 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.StreamMaxClientUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerDownloadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
+		{Key: conf.UserDefaultDownloadRPS, Value: "3", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Default download requests per second for non-guest users"},
+		{Key: conf.UserDefaultListRPS, Value: "5", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Default list requests per second for non-guest users"},
+		{Key: conf.GuestDownloadRPS, Value: "0", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Download requests per second for guest user (0 means unlimited)"},
+		{Key: conf.GuestListRPS, Value: "0", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "List requests per second for guest user (0 means unlimited)"},
 	}
 	additionalSettingItems := tool.Tools.Items()
 	// 固定顺序
