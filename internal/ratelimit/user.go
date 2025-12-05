@@ -72,6 +72,12 @@ func limitValueFor(user *model.User, kind RequestKind) float64 {
 	return setting.GetFloat(conf.UserDefaultListRPS, defaultListRPS)
 }
 
+// LimitValue returns the effective configured RPS for the user and kind.
+// 0 or a negative value means unlimited.
+func LimitValue(user *model.User, kind RequestKind) float64 {
+	return limitValueFor(user, kind)
+}
+
 func (m *Manager) store(kind RequestKind) map[uint]*userLimiter {
 	if kind == RequestKindList {
 		return m.list

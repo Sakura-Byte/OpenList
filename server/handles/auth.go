@@ -8,6 +8,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
@@ -82,7 +83,9 @@ func loginHash(c *gin.Context, req *LoginReq) {
 
 type UserResp struct {
 	model.User
-	Otp bool `json:"otp"`
+	Otp                  bool    `json:"otp"`
+	DownloadRPSEffective float64 `json:"download_rps_effective"`
+	ListRPSEffective     float64 `json:"list_rps_effective"`
 }
 
 // CurrentUser get current user by token
@@ -96,6 +99,8 @@ func CurrentUser(c *gin.Context) {
 	if userResp.OtpSecret != "" {
 		userResp.Otp = true
 	}
+	userResp.DownloadRPSEffective = ratelimit.LimitValue(user, ratelimit.RequestKindDownload)
+	userResp.ListRPSEffective = ratelimit.LimitValue(user, ratelimit.RequestKindList)
 	common.SuccessResp(c, userResp)
 }
 
