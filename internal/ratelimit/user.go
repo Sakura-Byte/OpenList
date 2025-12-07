@@ -18,11 +18,13 @@ type RequestKind string
 const (
 	RequestKindDownload RequestKind = "download"
 	RequestKindList     RequestKind = "list"
+	RequestKindSearch   RequestKind = "search"
 )
 
 const (
 	defaultDownloadRPS = 3.0
 	defaultListRPS     = 5.0
+	defaultSearchRPS   = 0.5
 )
 
 type userLimiter struct {
@@ -34,6 +36,7 @@ type Manager struct {
 	mu       sync.RWMutex
 	download map[uint]*userLimiter
 	list     map[uint]*userLimiter
+	search   map[uint]*userLimiter
 }
 
 var manager = newManager()
@@ -46,6 +49,7 @@ func newManager() *Manager {
 	return &Manager{
 		download: make(map[uint]*userLimiter),
 		list:     make(map[uint]*userLimiter),
+		search:   make(map[uint]*userLimiter),
 	}
 }
 
@@ -56,6 +60,8 @@ func limitValueFor(user *model.User, kind RequestKind) float64 {
 		override = user.DownloadRPS
 	case RequestKindList:
 		override = user.ListRPS
+	case RequestKindSearch:
+		override = user.SearchRPS
 	}
 	if override != nil {
 		return *override
@@ -64,12 +70,18 @@ func limitValueFor(user *model.User, kind RequestKind) float64 {
 		if kind == RequestKindDownload {
 			return setting.GetFloat(conf.GuestDownloadRPS, 0)
 		}
-		return setting.GetFloat(conf.GuestListRPS, 0)
+		if kind == RequestKindList {
+			return setting.GetFloat(conf.GuestListRPS, 0)
+		}
+		return setting.GetFloat(conf.GuestSearchRPS, 0)
 	}
 	if kind == RequestKindDownload {
 		return setting.GetFloat(conf.UserDefaultDownloadRPS, defaultDownloadRPS)
 	}
-	return setting.GetFloat(conf.UserDefaultListRPS, defaultListRPS)
+	if kind == RequestKindList {
+		return setting.GetFloat(conf.UserDefaultListRPS, defaultListRPS)
+	}
+	return setting.GetFloat(conf.UserDefaultSearchRPS, defaultSearchRPS)
 }
 
 // LimitValue returns the effective configured RPS for the user and kind.
@@ -81,6 +93,9 @@ func LimitValue(user *model.User, kind RequestKind) float64 {
 func (m *Manager) store(kind RequestKind) map[uint]*userLimiter {
 	if kind == RequestKindList {
 		return m.list
+	}
+	if kind == RequestKindSearch {
+		return m.search
 	}
 	return m.download
 }
@@ -116,15 +131,24 @@ func (m *Manager) ClearAll() {
 	defer m.mu.Unlock()
 	m.download = make(map[uint]*userLimiter)
 	m.list = make(map[uint]*userLimiter)
+	m.search = make(map[uint]*userLimiter)
 }
 
-// Allow checks if the user is allowed to proceed for a given request kind.
-// Returns errs.ExceedUserRateLimit when the limiter rejects the request.
+// Allow checks if the user (and guest IP) is allowed to proceed for a given request kind.
+// Returns errs.ExceedUserRateLimit or errs.ExceedIPRateLimit when the limiter rejects the request.
 func Allow(ctx context.Context, user *model.User, kind RequestKind) error {
-	_ = ctx
 	if user == nil {
 		return nil
 	}
+
+	if user.IsGuest() {
+		if ip, ok := ctx.Value(conf.ClientIPKey).(string); ok && ip != "" {
+			if l := ipMgr.limiter(ip, kind); l != nil && !l.Allow() {
+				return errs.ExceedIPRateLimit
+			}
+		}
+	}
+
 	l := manager.limiter(user, kind)
 	if l == nil {
 		return nil

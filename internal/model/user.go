@@ -58,6 +58,7 @@ type User struct {
 	Permission  int32    `json:"permission"`
 	DownloadRPS *float64 `json:"download_rps" gorm:"default:null"`
 	ListRPS     *float64 `json:"list_rps" gorm:"default:null"`
+	SearchRPS   *float64 `json:"search_rps" gorm:"default:null"`
 	OtpSecret   string   `json:"-"`
 	SsoID       string   `json:"sso_id"` // unique by sso platform
 	Authn       string   `gorm:"type:text" json:"-"`

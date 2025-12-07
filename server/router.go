@@ -29,6 +29,7 @@ func Init(e *gin.Engine) {
 	if conf.Conf.Scheme.HttpPort != -1 && conf.Conf.Scheme.HttpsPort != -1 && conf.Conf.Scheme.ForceHttps {
 		e.Use(middlewares.ForceHttps)
 	}
+	g.Use(middlewares.ClientIPContext)
 	g.Any("/ping", func(c *gin.Context) {
 		c.String(200, "pong")
 	})
@@ -200,7 +201,7 @@ func fsAndShare(g *gin.RouterGroup) {
 }
 
 func _fs(g *gin.RouterGroup) {
-	g.Any("/search", middlewares.SearchIndex, handles.Search)
+	g.Any("/search", middlewares.UserRateLimit(ratelimit.RequestKindSearch), middlewares.SearchIndex, handles.Search)
 	g.Any("/other", handles.FsOther)
 	g.Any("/dirs", handles.FsDirs)
 	g.POST("/mkdir", handles.FsMkdir)

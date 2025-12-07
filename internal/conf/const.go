@@ -159,8 +159,13 @@ const (
 	StreamMaxServerUploadSpeed            = "max_server_upload_speed"
 	UserDefaultDownloadRPS                = "default_download_rps"
 	UserDefaultListRPS                    = "default_list_rps"
+	UserDefaultSearchRPS                  = "default_search_rps"
 	GuestDownloadRPS                      = "guest_download_rps"
 	GuestListRPS                          = "guest_list_rps"
+	GuestSearchRPS                        = "guest_search_rps"
+	IPDownloadRPS                         = "ip_download_rps"
+	IPListRPS                             = "ip_list_rps"
+	IPSearchRPS                           = "ip_search_rps"
 )
 
 const (

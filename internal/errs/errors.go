@@ -13,6 +13,7 @@ var (
 	RelativePath = errors.New("using relative path is not allowed")
 
 	ExceedUserRateLimit = errors.New("user rate limit exceeded")
+	ExceedIPRateLimit   = errors.New("ip rate limit exceeded")
 
 	UploadNotSupported = errors.New("upload not supported")
 	MetaNotFound       = errors.New("meta not found")

@@ -243,8 +243,13 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.StreamMaxServerUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.UserDefaultDownloadRPS, Value: "3", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Default download requests per second for non-guest users"},
 		{Key: conf.UserDefaultListRPS, Value: "5", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Default list requests per second for non-guest users"},
+		{Key: conf.UserDefaultSearchRPS, Value: "0.5", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Default search requests per second for non-guest users"},
 		{Key: conf.GuestDownloadRPS, Value: "0", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Download requests per second for guest user (0 means unlimited)"},
 		{Key: conf.GuestListRPS, Value: "0", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "List requests per second for guest user (0 means unlimited)"},
+		{Key: conf.GuestSearchRPS, Value: "0", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Search requests per second for guest user (0 means unlimited)"},
+		{Key: conf.IPDownloadRPS, Value: "3", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Download requests per second per IP for guest users"},
+		{Key: conf.IPListRPS, Value: "10", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "List requests per second per IP for guest users"},
+		{Key: conf.IPSearchRPS, Value: "2", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Search requests per second per IP for guest users"},
 	}
 	additionalSettingItems := tool.Tools.Items()
 	// 固定顺序

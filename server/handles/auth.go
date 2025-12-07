@@ -86,6 +86,7 @@ type UserResp struct {
 	Otp                  bool    `json:"otp"`
 	DownloadRPSEffective float64 `json:"download_rps_effective"`
 	ListRPSEffective     float64 `json:"list_rps_effective"`
+	SearchRPSEffective   float64 `json:"search_rps_effective"`
 }
 
 // CurrentUser get current user by token
@@ -101,6 +102,7 @@ func CurrentUser(c *gin.Context) {
 	}
 	userResp.DownloadRPSEffective = ratelimit.LimitValue(user, ratelimit.RequestKindDownload)
 	userResp.ListRPSEffective = ratelimit.LimitValue(user, ratelimit.RequestKindList)
+	userResp.SearchRPSEffective = ratelimit.LimitValue(user, ratelimit.RequestKindSearch)
 	common.SuccessResp(c, userResp)
 }
 

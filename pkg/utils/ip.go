@@ -7,6 +7,12 @@ import (
 )
 
 func ClientIP(r *http.Request) string {
+	if ip := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); ip != "" {
+		return ip
+	}
+	if ip := strings.TrimSpace(r.Header.Get("True-Client-IP")); ip != "" {
+		return ip
+	}
 	xForwardedFor := r.Header.Get("X-Forwarded-For")
 	ip := strings.TrimSpace(strings.Split(xForwardedFor, ",")[0])
 	if ip != "" {
