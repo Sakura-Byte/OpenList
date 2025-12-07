@@ -18,7 +18,8 @@ func _pprof(g *gin.RouterGroup) {
 }
 
 func debug(g *gin.RouterGroup) {
-	g.GET("/path/*path", middlewares.Down(func(path, token string) (*model.User, error) {
+	g.GET("/path/*path", middlewares.Down(func(path, ip, token string) (*model.User, error) {
+		_ = ip
 		return nil, sign.Verify(path, token)
 	}), func(c *gin.Context) {
 		rawPath := c.Request.Context().Value(conf.PathKey).(string)
