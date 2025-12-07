@@ -46,6 +46,7 @@ const (
 	CustomizeBody           = "customize_body"
 	LinkExpiration          = "link_expiration"
 	SignAll                 = "sign_all"
+	SignBindIP              = "sign_bind_ip"
 	PrivacyRegs             = "privacy_regs"
 	OcrApi                  = "ocr_api"
 	FilenameCharMapping     = "filename_char_mapping"

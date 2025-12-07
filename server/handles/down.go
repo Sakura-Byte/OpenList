@@ -51,6 +51,7 @@ func Down(c *gin.Context) {
 func Proxy(c *gin.Context) {
 	rawPath := c.Request.Context().Value(conf.PathKey).(string)
 	filename := stdpath.Base(rawPath)
+	ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
 	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
 	if err != nil {
 		common.ErrorPage(c, err, 500)
@@ -59,7 +60,7 @@ func Proxy(c *gin.Context) {
 	if canProxy(storage, filename) {
 		user, _ := c.Request.Context().Value(conf.UserKey).(*model.User)
 		if _, ok := c.GetQuery("d"); !ok {
-			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath, user); url != "" {
+			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath, user, ip); url != "" {
 				c.Redirect(302, url)
 				return
 			}

@@ -402,6 +402,7 @@ func Link(c *gin.Context) {
 	//rawPath := stdpath.Join(user.BasePath, req.Path)
 	// why need not join base_path? because it's always the full path
 	rawPath := req.Path
+	ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
 	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
@@ -412,11 +413,11 @@ func Link(c *gin.Context) {
 			URL: fmt.Sprintf("%s/p%s?d&sign=%s",
 				common.GetApiUrl(c),
 				utils.EncodePath(rawPath, true),
-				sign.SignDownload(user, rawPath)),
+				sign.SignDownload(user, rawPath, ip)),
 		})
 		return
 	}
-	link, _, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{IP: c.ClientIP(), Header: c.Request.Header, Redirect: true})
+	link, _, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{IP: ip, Header: c.Request.Header, Redirect: true})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return

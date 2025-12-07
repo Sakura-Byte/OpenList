@@ -21,7 +21,7 @@ func PathParse(c *gin.Context) {
 	c.Next()
 }
 
-func Down(verifyFunc func(string, string) (*model.User, error)) func(c *gin.Context) {
+func Down(verifyFunc func(string, string, string) (*model.User, error)) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		rawPath := c.Request.Context().Value(conf.PathKey).(string)
 		meta, err := op.GetNearestMeta(rawPath)
@@ -33,9 +33,10 @@ func Down(verifyFunc func(string, string) (*model.User, error)) func(c *gin.Cont
 		}
 		common.GinWithValue(c, conf.MetaKey, meta)
 		// verify sign
+		ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
 		if needSign(meta, rawPath) {
 			s := c.Query("sign")
-			user, verr := verifyFunc(rawPath, strings.TrimSuffix(s, "/"))
+			user, verr := verifyFunc(rawPath, ip, strings.TrimSuffix(s, "/"))
 			if verr == nil && user == nil {
 				user, _ = op.GetGuest()
 			}

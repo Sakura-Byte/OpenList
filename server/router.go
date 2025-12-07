@@ -46,13 +46,16 @@ func Init(e *gin.Engine) {
 	S3(g.Group("/s3"))
 
 	downloadLimiter := middlewares.DownloadRateLimiter(stream.ClientDownloadLimit)
-	signCheck := middlewares.Down(sign.VerifyDownload)
+	signCheck := middlewares.Down(func(path, ip, token string) (*model.User, error) {
+		return sign.VerifyDownload(path, ip, token)
+	})
 	rpsDownload := middlewares.UserRateLimit(ratelimit.RequestKindDownload)
 	g.GET("/d/*path", middlewares.PathParse, signCheck, rpsDownload, downloadLimiter, handles.Down)
 	g.GET("/p/*path", middlewares.PathParse, signCheck, rpsDownload, downloadLimiter, handles.Proxy)
 	g.HEAD("/d/*path", middlewares.PathParse, signCheck, handles.Down)
 	g.HEAD("/p/*path", middlewares.PathParse, signCheck, handles.Proxy)
-	archiveSignCheck := middlewares.Down(func(path, token string) (*model.User, error) {
+	archiveSignCheck := middlewares.Down(func(path, ip, token string) (*model.User, error) {
+		_ = ip
 		return nil, sign.VerifyArchive(path, token)
 	})
 	g.GET("/ad/*path", middlewares.PathParse, archiveSignCheck, downloadLimiter, handles.ArchiveDown)
@@ -171,6 +174,7 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_thunder", handles.SetThunder)
 	setting.POST("/set_thunderx", handles.SetThunderX)
 	setting.POST("/set_thunder_browser", handles.SetThunderBrowser)
+	setting.POST("/ratelimit/report", handles.RateLimitReport)
 
 	// retain /admin/task API to ensure compatibility with legacy automation scripts
 	_task(g.Group("/task"))

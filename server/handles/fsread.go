@@ -116,8 +116,9 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 			directUploadTools = op.GetDirectUploadTools(storage)
 		}
 	}
+	ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
 	common.SuccessResp(c, FsListResp{
-		Content:           toObjsResp(objs, reqPath, isEncrypt(meta, reqPath), user),
+		Content:           toObjsResp(objs, reqPath, isEncrypt(meta, reqPath), user, ip),
 		Total:             int64(total),
 		Readme:            getReadme(meta, reqPath),
 		Header:            getHeader(meta, reqPath),
@@ -228,7 +229,7 @@ func pagination(objs []model.Obj, req *model.PageReq) (int, []model.Obj) {
 	return total, objs[start:end]
 }
 
-func toObjsResp(objs []model.Obj, parent string, encrypt bool, user *model.User) []ObjResp {
+func toObjsResp(objs []model.Obj, parent string, encrypt bool, user *model.User, ip string) []ObjResp {
 	var resp []ObjResp
 	for _, obj := range objs {
 		thumb, _ := model.GetThumb(obj)
@@ -243,7 +244,7 @@ func toObjsResp(objs []model.Obj, parent string, encrypt bool, user *model.User)
 			Created:      obj.CreateTime(),
 			HashInfoStr:  obj.GetHash().String(),
 			HashInfo:     obj.GetHash().Export(),
-			Sign:         common.SignDownload(obj, parent, encrypt, user),
+			Sign:         common.SignDownload(obj, parent, encrypt, user, ip),
 			Thumb:        thumb,
 			Type:         utils.GetObjType(obj.GetName(), obj.IsDir()),
 			MountDetails: mountDetails,
@@ -291,6 +292,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
+	ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
 	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil {
 		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
@@ -323,11 +325,11 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 			return
 		}
 		if storage.Config().MustProxy() || storage.GetStorage().WebProxy {
-			rawURL = common.GenerateDownProxyURL(storage.GetStorage(), reqPath, user)
+			rawURL = common.GenerateDownProxyURL(storage.GetStorage(), reqPath, user, ip)
 			if rawURL == "" {
 				query := ""
 				if isEncrypt(meta, reqPath) || setting.GetBool(conf.SignAll) {
-					query = "?sign=" + sign.SignDownload(user, reqPath)
+					query = "?sign=" + sign.SignDownload(user, reqPath, ip)
 				}
 				rawURL = fmt.Sprintf("%s/p%s%s",
 					common.GetApiUrl(c),
@@ -341,7 +343,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 			} else {
 				// if storage is not proxy, use raw url by fs.Link
 				link, _, err := fs.Link(c.Request.Context(), reqPath, model.LinkArgs{
-					IP:       c.ClientIP(),
+					IP:       ip,
 					Header:   c.Request.Header,
 					Redirect: true,
 				})
@@ -374,7 +376,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 			Created:      obj.CreateTime(),
 			HashInfoStr:  obj.GetHash().String(),
 			HashInfo:     obj.GetHash().Export(),
-			Sign:         common.SignDownload(obj, parentPath, isEncrypt(meta, reqPath), user),
+			Sign:         common.SignDownload(obj, parentPath, isEncrypt(meta, reqPath), user, ip),
 			Type:         utils.GetFileType(obj.GetName()),
 			Thumb:        thumb,
 			MountDetails: mountDetails,
@@ -383,7 +385,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 		Readme:   getReadme(meta, reqPath),
 		Header:   getHeader(meta, reqPath),
 		Provider: provider,
-		Related:  toObjsResp(related, parentPath, isEncrypt(parentMeta, parentPath), user),
+		Related:  toObjsResp(related, parentPath, isEncrypt(parentMeta, parentPath), user, ip),
 	})
 }
 

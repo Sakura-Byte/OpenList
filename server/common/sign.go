@@ -17,9 +17,9 @@ func Sign(obj model.Obj, parent string, encrypt bool) string {
 }
 
 // SignDownload generates a user-bound download token.
-func SignDownload(obj model.Obj, parent string, encrypt bool, user *model.User) string {
+func SignDownload(obj model.Obj, parent string, encrypt bool, user *model.User, ip string) string {
 	if obj.IsDir() || (!encrypt && !setting.GetBool(conf.SignAll)) {
 		return ""
 	}
-	return sign.SignDownload(user, stdpath.Join(parent, obj.GetName()))
+	return sign.SignDownload(user, stdpath.Join(parent, obj.GetName()), ip)
 }
