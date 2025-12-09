@@ -87,7 +87,26 @@ func limitValueFor(user *model.User, kind RequestKind) float64 {
 // LimitValue returns the effective configured RPS for the user and kind.
 // 0 or a negative value means unlimited.
 func LimitValue(user *model.User, kind RequestKind) float64 {
-	return limitValueFor(user, kind)
+	if user == nil {
+		return 0
+	}
+	userLimit := limitValueFor(user, kind)
+	if !user.IsGuest() {
+		return userLimit
+	}
+	ipLimit := ipLimitValue(kind)
+	switch {
+	case userLimit <= 0 && ipLimit <= 0:
+		return 0
+	case userLimit <= 0:
+		return ipLimit
+	case ipLimit <= 0:
+		return userLimit
+	case userLimit < ipLimit:
+		return userLimit
+	default:
+		return ipLimit
+	}
 }
 
 func (m *Manager) store(kind RequestKind) map[uint]*userLimiter {
