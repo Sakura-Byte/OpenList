@@ -275,7 +275,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	ip := utils.ClientIP(r)
 	_, release, err := ratelimit.AcquireDownload(ctx, user, ip)
 	if err != nil {
-		if errs.Is(err, errs.ExceedUserRateLimit) || errs.Is(err, errs.ExceedIPRateLimit) {
+		if errors.Is(err, errs.ExceedUserRateLimit) || errors.Is(err, errs.ExceedIPRateLimit) {
 			return http.StatusTooManyRequests, err
 		}
 		return http.StatusInternalServerError, err
