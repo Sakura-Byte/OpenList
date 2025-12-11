@@ -101,6 +101,12 @@ func RateLimitReport(c *gin.Context) {
 	case "release":
 		_ = ratelimit.ReleaseDownload(req.LeaseID, user, ip)
 		common.SuccessResp(c)
+	case "renew":
+		if err := ratelimit.RenewDownload(user, ip, req.LeaseID); err != nil {
+			common.ErrorResp(c, err, http.StatusBadRequest)
+			return
+		}
+		common.SuccessResp(c)
 	default:
 		common.ErrorStrResp(c, "invalid mode", http.StatusBadRequest)
 	}

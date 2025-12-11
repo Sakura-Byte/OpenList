@@ -77,10 +77,47 @@ func AcquireDownload(ctx context.Context, user *model.User, ip string) (string, 
 	return downloadConcurrency.acquire(ctx, user, ip)
 }
 
+// RenewDownload extends an existing lease's TTL. Returns an error if the lease
+// is missing or does not belong to the provided user/IP.
+func RenewDownload(user *model.User, ip, leaseID string) error {
+	return downloadConcurrency.renew(user, ip, leaseID)
+}
+
 // ReleaseDownload releases a previously acquired lease by ID, validating the user/IP.
 // It returns true when a lease was actually released.
 func ReleaseDownload(leaseID string, user *model.User, ip string) bool {
 	return downloadConcurrency.release(leaseID, user, ip)
+}
+
+// StartDownloadLeaseRenewal periodically renews a download lease until the
+// provided context is done or stop() is called. Returns a stop function safe to
+// call multiple times.
+func StartDownloadLeaseRenewal(ctx context.Context, user *model.User, ip, leaseID string, interval time.Duration) func() {
+	if leaseID == "" || user == nil || interval <= 0 {
+		return func() {}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stopCh := make(chan struct{})
+	var once sync.Once
+	stop := func() { once.Do(func() { close(stopCh) }) }
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_ = RenewDownload(user, ip, leaseID)
+			case <-ctx.Done():
+				return
+			case <-stopCh:
+				return
+			}
+		}
+	}()
+	return stop
 }
 
 func (m *downloadConcurrencyManager) acquire(ctx context.Context, user *model.User, ip string) (string, func(), error) {
@@ -147,6 +184,30 @@ func (m *downloadConcurrencyManager) acquire(ctx context.Context, user *model.Us
 	}
 
 	return leaseID, release, nil
+}
+
+func (m *downloadConcurrencyManager) renew(user *model.User, ip, leaseID string) error {
+	if leaseID == "" || user == nil {
+		return errs.InvalidDownloadLease
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cleanupExpiredLocked()
+
+	lease, ok := m.leases[leaseID]
+	if !ok || lease.released {
+		return errs.InvalidDownloadLease
+	}
+	if lease.userID != user.ID {
+		return errs.InvalidDownloadLease
+	}
+	if lease.useIP && lease.ip != ip {
+		return errs.InvalidDownloadLease
+	}
+
+	lease.expiresAt = time.Now().Add(downloadLeaseTTL)
+	return nil
 }
 
 func (m *downloadConcurrencyManager) release(leaseID string, user *model.User, ip string) bool {
