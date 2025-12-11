@@ -175,6 +175,7 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_thunderx", handles.SetThunderX)
 	setting.POST("/set_thunder_browser", handles.SetThunderBrowser)
 	setting.POST("/ratelimit/report", handles.RateLimitReport)
+	setting.GET("/ratelimit/ws", handles.RateLimitWS)
 
 	// retain /admin/task API to ensure compatibility with legacy automation scripts
 	_task(g.Group("/task"))
