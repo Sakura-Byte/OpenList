@@ -20,6 +20,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 
@@ -271,6 +272,15 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	if storage.GetStorage().ProxyRange {
 		link = common.ProxyRange(ctx, link, fi.GetSize())
 	}
+	ip := utils.ClientIP(r)
+	_, release, err := ratelimit.AcquireDownload(ctx, user, ip)
+	if err != nil {
+		if errs.Is(err, errs.ExceedUserRateLimit) || errs.Is(err, errs.ExceedIPRateLimit) {
+			return http.StatusTooManyRequests, err
+		}
+		return http.StatusInternalServerError, err
+	}
+	defer release()
 	err = common.Proxy(w, r, link, fi)
 	if err != nil {
 		if statusCode, ok := errs.UnwrapOrSelf(err).(net.HttpStatusCodeError); ok {

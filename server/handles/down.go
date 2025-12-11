@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/http"
 	stdpath "path"
 	"strconv"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
+	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -116,6 +118,14 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 	if proxyRange {
 		link = common.ProxyRange(c, link, file.GetSize())
 	}
+	user, _ := c.Request.Context().Value(conf.UserKey).(*model.User)
+	ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
+	_, release, err := ratelimit.AcquireDownload(c.Request.Context(), user, ip)
+	if err != nil {
+		common.ErrorPage(c, err, http.StatusTooManyRequests, true)
+		return
+	}
+	defer release()
 	Writer := &common.WrittenResponseWriter{ResponseWriter: c.Writer}
 	raw, _ := strconv.ParseBool(c.DefaultQuery("raw", "false"))
 	if utils.Ext(file.GetName()) == "md" && setting.GetBool(conf.FilterReadMeScripts) && !raw {

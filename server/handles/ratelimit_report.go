@@ -3,6 +3,7 @@ package handles
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -19,6 +20,8 @@ type RateLimitReportReq struct {
 	Sign     string `json:"sign"`
 	Username string `json:"username"`
 	IP       string `json:"ip"`
+	Mode     string `json:"mode"`
+	LeaseID  string `json:"lease_id"`
 }
 
 func RateLimitReport(c *gin.Context) {
@@ -45,8 +48,17 @@ func RateLimitReport(c *gin.Context) {
 	if ip == "" {
 		ip = c.ClientIP()
 	}
-
 	ctx := context.WithValue(c.Request.Context(), conf.ClientIPKey, ip)
+
+	mode := strings.ToLower(req.Mode)
+	if mode == "" {
+		mode = "rps"
+	}
+
+	if mode != "rps" && kind != ratelimit.RequestKindDownload {
+		common.ErrorStrResp(c, "concurrency limit only applies to download kind", http.StatusBadRequest)
+		return
+	}
 
 	var user *model.User
 	var err error
@@ -65,10 +77,28 @@ func RateLimitReport(c *gin.Context) {
 		}
 	}
 
-	if err := ratelimit.Allow(ctx, user, kind); err != nil {
-		common.ErrorResp(c, err, http.StatusTooManyRequests)
-		return
+	switch mode {
+	case "rps":
+		if err := ratelimit.Allow(ctx, user, kind); err != nil {
+			common.ErrorResp(c, err, http.StatusTooManyRequests)
+			return
+		}
+		common.SuccessResp(c)
+	case "acquire":
+		if err := ratelimit.Allow(ctx, user, kind); err != nil {
+			common.ErrorResp(c, err, http.StatusTooManyRequests)
+			return
+		}
+		leaseID, _, err := ratelimit.AcquireDownload(ctx, user, ip)
+		if err != nil {
+			common.ErrorResp(c, err, http.StatusTooManyRequests)
+			return
+		}
+		common.SuccessResp(c, gin.H{"lease_id": leaseID})
+	case "release":
+		_ = ratelimit.ReleaseDownload(req.LeaseID, user, ip)
+		common.SuccessResp(c)
+	default:
+		common.ErrorStrResp(c, "invalid mode", http.StatusBadRequest)
 	}
-
-	common.SuccessResp(c)
 }
