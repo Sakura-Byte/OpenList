@@ -84,7 +84,11 @@ func ErrorWithDataResp(c *gin.Context, err error, code int, data interface{}, l 
 			log.Errorf("%v", err)
 		}
 	}
-	c.JSON(200, Resp[interface{}]{
+	status := 200
+	if code == http.StatusTooManyRequests {
+		status = code
+	}
+	c.JSON(status, Resp[interface{}]{
 		Code:    code,
 		Message: hidePrivacy(err.Error()),
 		Data:    data,
@@ -96,7 +100,11 @@ func ErrorStrResp(c *gin.Context, str string, code int, l ...bool) {
 	if len(l) != 0 && l[0] {
 		log.Error(str)
 	}
-	c.JSON(200, Resp[interface{}]{
+	status := 200
+	if code == http.StatusTooManyRequests {
+		status = code
+	}
+	c.JSON(status, Resp[interface{}]{
 		Code:    code,
 		Message: hidePrivacy(str),
 		Data:    nil,
