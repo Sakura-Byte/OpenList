@@ -42,6 +42,7 @@ func Init(e *gin.Engine) {
 	if conf.Conf.MaxConnections > 0 {
 		g.Use(middlewares.MaxAllowed(conf.Conf.MaxConnections))
 	}
+	g.GET("/ratelimit/ws", handles.RateLimitWS)
 	WebDav(g.Group("/dav"))
 	S3(g.Group("/s3"))
 
@@ -175,7 +176,6 @@ func admin(g *gin.RouterGroup) {
 	setting.POST("/set_thunderx", handles.SetThunderX)
 	setting.POST("/set_thunder_browser", handles.SetThunderBrowser)
 	setting.POST("/ratelimit/report", handles.RateLimitReport)
-	setting.GET("/ratelimit/ws", handles.RateLimitWS)
 
 	// retain /admin/task API to ensure compatibility with legacy automation scripts
 	_task(g.Group("/task"))
