@@ -48,7 +48,10 @@ func RateLimitReport(c *gin.Context) {
 	if ip == "" {
 		ip = c.ClientIP()
 	}
-	ctx := context.WithValue(c.Request.Context(), conf.ClientIPKey, ip)
+	// Do not tie the lease to the request context, otherwise it gets released
+	// as soon as this handler returns. We want the lease to live until the
+	// worker explicitly releases it (or the TTL expires).
+	ctx := context.WithValue(context.Background(), conf.ClientIPKey, ip)
 
 	mode := strings.ToLower(req.Mode)
 	if mode == "" {
