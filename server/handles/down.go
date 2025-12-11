@@ -126,7 +126,7 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 		common.ErrorPage(c, err, http.StatusTooManyRequests, true)
 		return
 	}
-	stopRenew := ratelimit.StartDownloadLeaseRenewal(c.Request.Context(), user, ip, leaseID, 2*time.Minute)
+	stopRenew := ratelimit.StartDownloadLeaseRenewal(c.Request.Context(), user, ip, leaseID, 10*time.Second)
 	defer func() {
 		stopRenew()
 		release()
