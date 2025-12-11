@@ -280,7 +280,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		}
 		return http.StatusInternalServerError, err
 	}
-	stopRenew := ratelimit.StartDownloadLeaseRenewal(ctx, user, ip, leaseID, 2*time.Minute)
+	stopRenew := ratelimit.StartDownloadLeaseRenewal(ctx, user, ip, leaseID, 10*time.Second)
 	defer func() {
 		stopRenew()
 		release()

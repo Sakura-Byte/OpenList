@@ -12,7 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 )
 
-const downloadLeaseTTL = time.Minute * 10
+const downloadLeaseTTL = time.Second * 20
 const (
 	defaultUserDownloadConcurrency  = 3
 	defaultGuestDownloadConcurrency = 3
