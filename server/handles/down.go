@@ -7,7 +7,6 @@ import (
 	"net/http"
 	stdpath "path"
 	"strconv"
-	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -121,16 +120,16 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 	}
 	user, _ := c.Request.Context().Value(conf.UserKey).(*model.User)
 	ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
-	leaseID, release, err := ratelimit.AcquireDownload(c.Request.Context(), user, ip)
+	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(user, ip)
 	if err != nil {
 		common.ErrorPage(c, err, http.StatusTooManyRequests, true)
 		return
 	}
-	stopRenew := ratelimit.StartDownloadLeaseRenewal(c.Request.Context(), user, ip, leaseID, 10*time.Second)
-	defer func() {
-		stopRenew()
-		release()
-	}()
+	if slotToken != "" {
+		defer func() {
+			_ = ratelimit.FairQueueRelease(slotToken, hitAt)
+		}()
+	}
 	Writer := &common.WrittenResponseWriter{ResponseWriter: c.Writer}
 	raw, _ := strconv.ParseBool(c.DefaultQuery("raw", "false"))
 	if utils.Ext(file.GetName()) == "md" && setting.GetBool(conf.FilterReadMeScripts) && !raw {

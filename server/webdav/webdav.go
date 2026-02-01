@@ -273,18 +273,18 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		link = common.ProxyRange(ctx, link, fi.GetSize())
 	}
 	ip := utils.ClientIP(r)
-	leaseID, release, err := ratelimit.AcquireDownload(ctx, user, ip)
+	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(user, ip)
 	if err != nil {
 		if errors.Is(err, errs.ExceedUserRateLimit) || errors.Is(err, errs.ExceedIPRateLimit) {
 			return http.StatusTooManyRequests, err
 		}
 		return http.StatusInternalServerError, err
 	}
-	stopRenew := ratelimit.StartDownloadLeaseRenewal(ctx, user, ip, leaseID, 10*time.Second)
-	defer func() {
-		stopRenew()
-		release()
-	}()
+	if slotToken != "" {
+		defer func() {
+			_ = ratelimit.FairQueueRelease(slotToken, hitAt)
+		}()
+	}
 	err = common.Proxy(w, r, link, fi)
 	if err != nil {
 		if statusCode, ok := errs.UnwrapOrSelf(err).(net.HttpStatusCodeError); ok {

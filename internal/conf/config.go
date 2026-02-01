@@ -76,6 +76,20 @@ type TasksConfig struct {
 	AllowRetryCanceled bool       `json:"allow_retry_canceled" env:"ALLOW_RETRY_CANCELED"`
 }
 
+type FairQueue struct {
+	MaxWaitMs                  int64  `json:"max_wait_ms" env:"MAX_WAIT_MS"`
+	PollIntervalMs             int64  `json:"poll_interval_ms" env:"POLL_INTERVAL_MS"`
+	PollWindowMs               int64  `json:"poll_window_ms" env:"POLL_WINDOW_MS"`
+	MinSlotHoldMs              int64  `json:"min_slot_hold_ms" env:"MIN_SLOT_HOLD_MS"`
+	SmoothReleaseIntervalMs    *int64 `json:"smooth_release_interval_ms" env:"SMOOTH_RELEASE_INTERVAL_MS"`
+	GlobalMaxWaiters           int    `json:"global_max_waiters" env:"GLOBAL_MAX_WAITERS"`
+	MaxWaitersPerHost          int    `json:"max_waiters_per_host" env:"MAX_WAITERS_PER_HOST"`
+	MaxWaitersPerIP            int    `json:"max_waiters_per_ip" env:"MAX_WAITERS_PER_IP"`
+	ZombieTimeoutSeconds       int    `json:"zombie_timeout_seconds" env:"ZOMBIE_TIMEOUT_SECONDS"`
+	SessionIdleSeconds         int    `json:"session_idle_seconds" env:"SESSION_IDLE_SECONDS"`
+	DefaultGrantedCleanupDelay int    `json:"default_granted_cleanup_delay" env:"DEFAULT_GRANTED_CLEANUP_DELAY"`
+}
+
 type Cors struct {
 	AllowOrigins []string `json:"allow_origins" env:"ALLOW_ORIGINS"`
 	AllowMethods []string `json:"allow_methods" env:"ALLOW_METHODS"`
@@ -126,6 +140,7 @@ type Config struct {
 	MaxConcurrency        int         `json:"max_concurrency" env:"MAX_CONCURRENCY"`
 	TlsInsecureSkipVerify bool        `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
 	Tasks                 TasksConfig `json:"tasks" envPrefix:"TASKS_"`
+	FairQueue             FairQueue   `json:"fair_queue" envPrefix:"FAIRQUEUE_"`
 	Cors                  Cors        `json:"cors" envPrefix:"CORS_"`
 	S3                    S3          `json:"s3" envPrefix:"S3_"`
 	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
@@ -217,6 +232,19 @@ func DefaultConfig(dataDir string) *Config {
 				MaxRetry: 2,
 			},
 			AllowRetryCanceled: false,
+		},
+		FairQueue: FairQueue{
+			MaxWaitMs:                  20000,
+			PollIntervalMs:             500,
+			PollWindowMs:               6000,
+			MinSlotHoldMs:              0,
+			SmoothReleaseIntervalMs:    nil,
+			GlobalMaxWaiters:           500,
+			MaxWaitersPerHost:          50,
+			MaxWaitersPerIP:            0,
+			ZombieTimeoutSeconds:       30,
+			SessionIdleSeconds:         90,
+			DefaultGrantedCleanupDelay: 5,
 		},
 		Cors: Cors{
 			AllowOrigins: []string{"*"},

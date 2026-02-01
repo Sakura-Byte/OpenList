@@ -57,9 +57,8 @@ func RateLimitReport(c *gin.Context) {
 	if mode == "" {
 		mode = "rps"
 	}
-
-	if mode != "rps" && kind != ratelimit.RequestKindDownload {
-		common.ErrorStrResp(c, "concurrency limit only applies to download kind", http.StatusBadRequest)
+	if mode != "rps" {
+		common.ErrorStrResp(c, "only rps mode is supported", http.StatusBadRequest)
 		return
 	}
 
@@ -80,25 +79,9 @@ func RateLimitReport(c *gin.Context) {
 		}
 	}
 
-	switch mode {
-	case "rps":
-		if err := ratelimit.Allow(ctx, user, kind); err != nil {
-			common.ErrorResp(c, err, http.StatusTooManyRequests)
-			return
-		}
-		common.SuccessResp(c)
-	case "acquire":
-		if err := ratelimit.Allow(ctx, user, kind); err != nil {
-			common.ErrorResp(c, err, http.StatusTooManyRequests)
-			return
-		}
-		leaseID, _, err := ratelimit.AcquireDownload(ctx, user, ip)
-		if err != nil {
-			common.ErrorResp(c, err, http.StatusTooManyRequests)
-			return
-		}
-		common.SuccessResp(c, gin.H{"lease_id": leaseID})
-	default:
-		common.ErrorStrResp(c, "invalid mode", http.StatusBadRequest)
+	if err := ratelimit.Allow(ctx, user, kind); err != nil {
+		common.ErrorResp(c, err, http.StatusTooManyRequests)
+		return
 	}
+	common.SuccessResp(c)
 }
