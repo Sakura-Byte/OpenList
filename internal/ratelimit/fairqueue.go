@@ -161,6 +161,7 @@ func fqMaxWaitersPerHost(cfg conf.FairQueue) int {
 }
 
 func fqGrantedCleanupDelay(cfg conf.FairQueue) time.Duration {
+	// 这个 delay 现在只用于“清理已结束 slot 对应的 session”，不会再把活跃 slot 的 session 提前删掉
 	if cfg.DefaultGrantedCleanupDelay <= 0 {
 		return 5 * time.Second
 	}
@@ -200,6 +201,7 @@ func (m *fairQueueManager) gc(cfg conf.FairQueue) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// 清理 pending 的 session（排队者）
 	for _, sess := range m.sessions {
 		if sess == nil || sess.State != sessionPending {
 			continue
@@ -210,9 +212,11 @@ func (m *fairQueueManager) gc(cfg conf.FairQueue) {
 		}
 		if idle > 0 && now.Sub(sess.LastSeenAt) >= idle {
 			m.removeSessionLocked(sess)
+			continue
 		}
 	}
 
+	// zombie slot 超时回收（兜底释放 active）
 	if zombie > 0 {
 		for token, slot := range m.activeSlots {
 			if slot == nil {
@@ -222,6 +226,22 @@ func (m *fairQueueManager) gc(cfg conf.FairQueue) {
 			if now.Sub(slot.AcquiredAt) >= zombie {
 				m.releaseSlotLocked(slot)
 			}
+		}
+	}
+
+	// 顺带清理 granted session：如果 slot 已经不在了，session 也该删
+	//（注意：这一步不是必须，但能加速清理 sessions map）
+	for _, sess := range m.sessions {
+		if sess == nil || sess.State != sessionGranted {
+			continue
+		}
+		if sess.SlotToken == "" {
+			m.removeSessionLocked(sess)
+			continue
+		}
+		if m.activeSlots[sess.SlotToken] == nil {
+			m.removeSessionLocked(sess)
+			continue
 		}
 	}
 }
@@ -273,6 +293,7 @@ func (m *fairQueueManager) untrackWaiter(sess *fairQueueSession) {
 	sess.WaiterTracked = false
 }
 
+// removeSessionLocked：修复关键点：只在 slot 已不活跃时才删 slotToSession，避免 orphan slot 失去关联
 func (m *fairQueueManager) removeSessionLocked(sess *fairQueueSession) {
 	if sess == nil {
 		return
@@ -280,9 +301,16 @@ func (m *fairQueueManager) removeSessionLocked(sess *fairQueueSession) {
 	if sess.WaiterTracked {
 		m.untrackWaiter(sess)
 	}
+
+	// 如果 session 持有 slotToken：
+	// - slot 仍活跃：不要 delete(slotToSession)，避免提前断开 slot->session 的关系
+	// - slot 已不活跃：可以删映射
 	if sess.SlotToken != "" {
-		delete(m.slotToSession, sess.SlotToken)
+		if m.activeSlots[sess.SlotToken] == nil {
+			delete(m.slotToSession, sess.SlotToken)
+		}
 	}
+
 	delete(m.sessions, sess.Token)
 }
 
@@ -413,6 +441,7 @@ func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 		}, nil
 	}
 
+	// 发放 slot
 	slotToken := random.String(16)
 	slot := &fairQueueSlot{
 		Token:        slotToken,
@@ -423,6 +452,7 @@ func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 	}
 	m.activeSlots[slotToken] = slot
 	m.slotToSession[slotToken] = sess.Token
+
 	if sess.MaxSlotsHost > 0 {
 		m.hostActive[sess.Host]++
 	}
@@ -434,6 +464,8 @@ func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 	sess.State = sessionGranted
 	sess.SlotToken = slotToken
 	m.untrackWaiter(sess)
+
+	// 修复点：granted cleanup 不再“强删 granted session”，只会在 slot 已经不存在时才清 session
 	m.scheduleGrantedCleanupLocked(sess.Token, fqGrantedCleanupDelay(cfg))
 
 	return fairQueueResult{
@@ -443,6 +475,7 @@ func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 	}, nil
 }
 
+// 修复点：cleanup 只在 slot 已经不活跃（已 release / 已 zombie）时才 remove session
 func (m *fairQueueManager) scheduleGrantedCleanupLocked(token string, delay time.Duration) {
 	sess := m.sessions[token]
 	if sess == nil || sess.CleanupScheduled {
@@ -450,18 +483,27 @@ func (m *fairQueueManager) scheduleGrantedCleanupLocked(token string, delay time
 	}
 	sess.CleanupScheduled = true
 	if delay <= 0 {
-		delete(m.sessions, token)
+		// 立即清理也要遵循“slot 不活跃才清”的规则
+		if sess.State != sessionGranted || sess.SlotToken == "" || m.activeSlots[sess.SlotToken] == nil {
+			m.removeSessionLocked(sess)
+		}
 		return
 	}
+
 	go func() {
 		time.Sleep(delay)
 		m.mu.Lock()
 		defer m.mu.Unlock()
+
 		sess := m.sessions[token]
 		if sess == nil || sess.State != sessionGranted {
 			return
 		}
-		m.removeSessionLocked(sess)
+
+		// 只有当 slot 已经不在 activeSlots，才清 session
+		if sess.SlotToken == "" || m.activeSlots[sess.SlotToken] == nil {
+			m.removeSessionLocked(sess)
+		}
 	}()
 }
 
@@ -569,6 +611,7 @@ func (m *fairQueueManager) release(slotToken string, hitAt time.Time) error {
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
+
 		slot := m.activeSlots[slotToken]
 		if slot == nil {
 			return
@@ -583,6 +626,8 @@ func (m *fairQueueManager) releaseSlotLocked(slot *fairQueueSlot) {
 	if slot == nil {
 		return
 	}
+
+	// active 计数回收
 	if slot.Host != "" {
 		if v := m.hostActive[slot.Host]; v > 1 {
 			m.hostActive[slot.Host] = v - 1
@@ -598,12 +643,16 @@ func (m *fairQueueManager) releaseSlotLocked(slot *fairQueueSlot) {
 			delete(m.ipActive, key)
 		}
 	}
+
+	// 删除 slot 本体
 	delete(m.activeSlots, slot.Token)
 
+	// 如果能找到 session，则顺带清理 session（现在不会因为 cleanup 提前删掉 slotToSession 而失联）
 	if sessToken := m.slotToSession[slot.Token]; sessToken != "" {
 		if sess := m.sessions[sessToken]; sess != nil {
 			m.removeSessionLocked(sess)
 		} else {
+			// session 已不在（可能手动删/其他原因），把映射清掉避免泄漏
 			delete(m.slotToSession, slot.Token)
 		}
 	}
