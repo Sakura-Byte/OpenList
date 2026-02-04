@@ -1,41 +1,27 @@
 /*
 Package ratelimit implements a fair queue system for download concurrency control.
 
-# Limit Modes
+# Design Overview
 
-The FairQueue enforces concurrency limits using two distinct modes:
+## Guest Users (Dual Queue)
+Guest users are subject to TWO limits, each with its own FIFO queue:
 
-## LimitByIP (Guest Users)
+1. IP Limit (ipQueues[ip], ipActive[ip])
+  - Each IP has its own queue
+  - Limit: IPDownloadConcurrency per IP
 
-When a guest user requests a download:
-  - Host key: "guest" (shared by all guests)
-  - Limit enforced by: IP address
-  - Each IP can have up to `IPDownloadConcurrency` concurrent downloads
-  - Different IPs progress independently, even when other IPs are queued
+2. Global Guest Limit (guestGlobalQueue, guestTotalActive)
+  - All guests share one global queue
+  - Limit: GuestDownloadConcurrency total
 
-Example: IP-A and IP-B are both guests. IP-A has 1 active download (limit=1).
-IP-A's second request queues. IP-B's first request proceeds immediately.
+A guest request can only be granted when:
+- It's at the front of its IP queue AND ipActive < ipLimit
+- It's at the front of the global queue AND guestTotalActive < guestLimit
 
-## LimitByUser (Registered Users)
-
-When a registered user requests a download:
-  - Host key: "u:<userID>" (unique per user)
-  - Limit enforced by: User ID
-  - Each user can have up to `UserDownloadConcurrency` concurrent downloads
-  - Requests from the same user are processed in FIFO order
-
-# Key Data Structures
-
-  - hostQueues: Maps host key → waiting session tokens (FIFO queue)
-  - hostActive: Maps host key → number of active slots
-  - ipActive: Maps IP address → number of active slots (for IP limiting)
-  - ipPending: Maps IP address → number of pending sessions (for IP limiting)
-
-# Flow Summary
-
- 1. acquire(): Try fast path if slots available, otherwise create pending session
- 2. poll(): Check if session can be granted; for IP-limited sessions, skip host queue check
- 3. release(): Free the slot when download completes
+## Registered Users (Single Queue)
+Each user has their own independent queue:
+- userQueues[userId], userActive[userId]
+- Limit: UserDownloadConcurrency per user
 */
 package ratelimit
 
@@ -75,38 +61,35 @@ const (
 )
 
 // fairQueueSession represents a waiting or granted download session.
-// The limit mode is determined by MaxSlotsIP:
-//   - MaxSlotsIP > 0 && IP != "": LimitByIP mode (guest users)
-//   - Otherwise: LimitByUser mode (registered users)
 type fairQueueSession struct {
-	Token            string                // Unique session identifier
-	Host             string                // Host key: "guest" for guests, "u:<id>" for users
-	IP               string                // Client IP address (used for IP limiting)
-	CreatedAt        time.Time             // Session creation time
-	LastSeenAt       time.Time             // Last poll time
-	State            fairQueueSessionState // PENDING or GRANTED
-	SlotToken        string                // Slot token if granted
-	MaxSlotsHost     int                   // User concurrency limit (always set, but ignored for IP-limited guests)
-	MaxSlotsIP       int                   // IP concurrency limit (>0 means LimitByIP mode)
-	WaiterTracked    bool                  // Whether session is in hostQueues
-	CleanupScheduled bool                  // Whether cleanup goroutine is scheduled
-}
+	Token      string // Unique session identifier
+	IP         string // Client IP (guest only)
+	UserKey    string // "u:<id>" for registered user, "" for guest
+	IsGuest    bool
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+	State      fairQueueSessionState
+	SlotToken  string
 
-// isIPLimited returns true if this session uses IP-based limiting (guest user with IP).
-// IP-limited sessions can acquire slots independently of other IPs, while user-limited
-// sessions must wait in FIFO order within their host queue.
-func (s *fairQueueSession) isIPLimited() bool {
-	return s.MaxSlotsIP > 0 && s.IP != ""
+	// Limits
+	MaxSlotsIP   int // IP concurrency limit (guest only)
+	MaxSlotsUser int // User concurrency limit (user only)
+
+	// Queue tracking
+	InIPQueue        bool // In ipQueues[ip]
+	InGlobalQueue    bool // In guestGlobalQueue
+	InUserQueue      bool // In userQueues[userKey]
+	CleanupScheduled bool
 }
 
 // fairQueueSlot represents an active download slot.
 type fairQueueSlot struct {
-	Token        string    // Unique slot identifier
-	Host         string    // Host key for this slot
-	IP           string    // Client IP (for IP-based active count)
-	AcquiredAt   time.Time // When slot was acquired
-	MaxSlotsHost int       // Copied from session for smooth release calculation
-	Releasing    bool      // Whether release is in progress
+	Token      string
+	IP         string // For guest: decrement ipActive and guestTotalActive on release
+	UserKey    string // For user: decrement userActive on release
+	IsGuest    bool
+	AcquiredAt time.Time
+	Releasing  bool
 }
 
 type smoothHostReleaser struct {
@@ -134,7 +117,6 @@ func (sr *smoothHostReleaser) nextReleaseAfter(base time.Time, interval time.Dur
 }
 
 // fairQueueManager manages all fair queue state.
-// Thread-safe: all operations acquire mu before accessing state.
 type fairQueueManager struct {
 	mu sync.Mutex
 
@@ -142,23 +124,25 @@ type fairQueueManager struct {
 	sessions      map[string]*fairQueueSession // queryToken → session
 	slotToSession map[string]string            // slotToken → queryToken
 
-	// Host-based queuing (for LimitByUser mode)
-	hostQueues map[string][]string // hostKey → ordered list of waiting queryTokens
-	hostActive map[string]int      // hostKey → count of active slots
+	// Guest: dual queue system
+	ipQueues         map[string][]string // ip → ordered list of waiting tokens
+	ipActive         map[string]int      // ip → count of active slots
+	guestGlobalQueue []string            // all guest tokens in FIFO order
+	guestTotalActive int                 // total active guest slots
 
-	// IP-based limiting (for LimitByIP mode)
-	ipPending map[string]int // IP → count of pending sessions
-	ipActive  map[string]int // IP → count of active slots
+	// User: single queue system
+	userQueues map[string][]string // "u:<id>" → ordered list of waiting tokens
+	userActive map[string]int      // "u:<id>" → count of active slots
 
 	// Slot management
-	activeSlots map[string]*fairQueueSlot // slotToken → slot
+	activeSlots map[string]*fairQueueSlot
 
 	// Rate smoothing for releases
 	smoothReleaser map[string]*smoothHostReleaser
 
 	// Global state
-	globalWaiters int       // Total pending sessions across all hosts
-	gcOnce        sync.Once // Ensures GC goroutine starts only once
+	globalWaiters int
+	gcOnce        sync.Once
 }
 
 var fairQueue = newFairQueueManager()
@@ -166,16 +150,17 @@ var fairQueue = newFairQueueManager()
 func newFairQueueManager() *fairQueueManager {
 	return &fairQueueManager{
 		sessions:       make(map[string]*fairQueueSession),
-		hostQueues:     make(map[string][]string),
-		ipPending:      make(map[string]int),
-		activeSlots:    make(map[string]*fairQueueSlot),
-		hostActive:     make(map[string]int),
-		ipActive:       make(map[string]int),
 		slotToSession:  make(map[string]string),
+		ipQueues:       make(map[string][]string),
+		ipActive:       make(map[string]int),
+		userQueues:     make(map[string][]string),
+		userActive:     make(map[string]int),
+		activeSlots:    make(map[string]*fairQueueSlot),
 		smoothReleaser: make(map[string]*smoothHostReleaser),
 	}
 }
 
+// Config helpers
 func fairQueueConfig() conf.FairQueue {
 	if conf.Conf == nil {
 		return conf.FairQueue{}
@@ -226,24 +211,34 @@ func fqMaxWaitersPerHost(cfg conf.FairQueue) int {
 }
 
 func fqGrantedCleanupDelay(cfg conf.FairQueue) time.Duration {
-	// 这个 delay 现在只用于“清理已结束 slot 对应的 session”，不会再把活跃 slot 的 session 提前删掉
 	if cfg.DefaultGrantedCleanupDelay <= 0 {
 		return 5 * time.Second
 	}
 	return time.Duration(cfg.DefaultGrantedCleanupDelay) * time.Second
 }
 
-func fairQueueHostKey(user *model.User) string {
-	if user == nil || user.IsGuest() {
-		return "guest"
+func userDownloadConcurrency(user *model.User) int {
+	if user == nil {
+		return 0
 	}
-	return fmt.Sprintf("u:%d", user.ID)
+	if user.DownloadConcurrency != nil {
+		return *user.DownloadConcurrency
+	}
+	if user.IsGuest() {
+		return setting.GetInt(conf.GuestDownloadConcurrency, defaultGuestDownloadConcurrency)
+	}
+	return setting.GetInt(conf.UserDefaultDownloadConcurrency, defaultUserDownloadConcurrency)
 }
 
-func fairQueueIPKey(ip string) string {
-	return ip
+func ipDownloadConcurrency() int {
+	return setting.GetInt(conf.IPDownloadConcurrency, defaultIPDownloadConcurrency)
 }
 
+func guestDownloadConcurrency() int {
+	return setting.GetInt(conf.GuestDownloadConcurrency, defaultGuestDownloadConcurrency)
+}
+
+// GC
 func (m *fairQueueManager) ensureGC() {
 	m.gcOnce.Do(func() {
 		go func() {
@@ -266,7 +261,7 @@ func (m *fairQueueManager) gc(cfg conf.FairQueue) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 清理 pending 的 session（排队者）
+	// Clean pending sessions
 	for _, sess := range m.sessions {
 		if sess == nil || sess.State != sessionPending {
 			continue
@@ -281,7 +276,7 @@ func (m *fairQueueManager) gc(cfg conf.FairQueue) {
 		}
 	}
 
-	// zombie slot 超时回收（兜底释放 active）
+	// Zombie slot recovery
 	if zombie > 0 {
 		for token, slot := range m.activeSlots {
 			if slot == nil {
@@ -294,111 +289,132 @@ func (m *fairQueueManager) gc(cfg conf.FairQueue) {
 		}
 	}
 
-	// 顺带清理 granted session：如果 slot 已经不在了，session 也该删
-	//（注意：这一步不是必须，但能加速清理 sessions map）
+	// Clean orphaned granted sessions
 	for _, sess := range m.sessions {
 		if sess == nil || sess.State != sessionGranted {
 			continue
 		}
-		if sess.SlotToken == "" {
+		if sess.SlotToken == "" || m.activeSlots[sess.SlotToken] == nil {
 			m.removeSessionLocked(sess)
-			continue
-		}
-		if m.activeSlots[sess.SlotToken] == nil {
-			m.removeSessionLocked(sess)
-			continue
 		}
 	}
 }
 
-func (m *fairQueueManager) trackWaiter(sess *fairQueueSession) {
-	if sess == nil || sess.WaiterTracked {
+// Queue management
+func (m *fairQueueManager) addToIPQueue(sess *fairQueueSession) {
+	if sess.InIPQueue || sess.IP == "" {
 		return
 	}
-	queue := m.hostQueues[sess.Host]
-	queue = append(queue, sess.Token)
-	m.hostQueues[sess.Host] = queue
+	m.ipQueues[sess.IP] = append(m.ipQueues[sess.IP], sess.Token)
+	sess.InIPQueue = true
+}
+
+func (m *fairQueueManager) removeFromIPQueue(sess *fairQueueSession) {
+	if !sess.InIPQueue || sess.IP == "" {
+		return
+	}
+	queue := m.ipQueues[sess.IP]
+	out := queue[:0]
+	for _, t := range queue {
+		if t != sess.Token {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		delete(m.ipQueues, sess.IP)
+	} else {
+		m.ipQueues[sess.IP] = out
+	}
+	sess.InIPQueue = false
+}
+
+func (m *fairQueueManager) addToGlobalQueue(sess *fairQueueSession) {
+	if sess.InGlobalQueue {
+		return
+	}
+	m.guestGlobalQueue = append(m.guestGlobalQueue, sess.Token)
+	sess.InGlobalQueue = true
 	m.globalWaiters++
-	if sess.IP != "" {
-		key := fairQueueIPKey(sess.IP)
-		m.ipPending[key]++
-	}
-	sess.WaiterTracked = true
 }
 
-func (m *fairQueueManager) untrackWaiter(sess *fairQueueSession) {
-	if sess == nil || !sess.WaiterTracked {
+func (m *fairQueueManager) removeFromGlobalQueue(sess *fairQueueSession) {
+	if !sess.InGlobalQueue {
 		return
 	}
-	queue := m.hostQueues[sess.Host]
-	if len(queue) > 0 {
-		out := queue[:0]
-		for _, token := range queue {
-			if token != sess.Token {
-				out = append(out, token)
-			}
-		}
-		if len(out) == 0 {
-			delete(m.hostQueues, sess.Host)
-		} else {
-			m.hostQueues[sess.Host] = out
+	out := m.guestGlobalQueue[:0]
+	for _, t := range m.guestGlobalQueue {
+		if t != sess.Token {
+			out = append(out, t)
 		}
 	}
+	m.guestGlobalQueue = out
+	sess.InGlobalQueue = false
 	if m.globalWaiters > 0 {
 		m.globalWaiters--
 	}
-	if sess.IP != "" {
-		key := fairQueueIPKey(sess.IP)
-		if v := m.ipPending[key]; v > 1 {
-			m.ipPending[key] = v - 1
-		} else {
-			delete(m.ipPending, key)
-		}
-	}
-	sess.WaiterTracked = false
 }
 
-// removeSessionLocked：修复关键点：只在 slot 已不活跃时才删 slotToSession，避免 orphan slot 失去关联
+func (m *fairQueueManager) addToUserQueue(sess *fairQueueSession) {
+	if sess.InUserQueue || sess.UserKey == "" {
+		return
+	}
+	m.userQueues[sess.UserKey] = append(m.userQueues[sess.UserKey], sess.Token)
+	sess.InUserQueue = true
+	m.globalWaiters++
+}
+
+func (m *fairQueueManager) removeFromUserQueue(sess *fairQueueSession) {
+	if !sess.InUserQueue || sess.UserKey == "" {
+		return
+	}
+	queue := m.userQueues[sess.UserKey]
+	out := queue[:0]
+	for _, t := range queue {
+		if t != sess.Token {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		delete(m.userQueues, sess.UserKey)
+	} else {
+		m.userQueues[sess.UserKey] = out
+	}
+	sess.InUserQueue = false
+	if m.globalWaiters > 0 {
+		m.globalWaiters--
+	}
+}
+
 func (m *fairQueueManager) removeSessionLocked(sess *fairQueueSession) {
 	if sess == nil {
 		return
 	}
-	if sess.WaiterTracked {
-		m.untrackWaiter(sess)
+	if sess.IsGuest {
+		m.removeFromIPQueue(sess)
+		m.removeFromGlobalQueue(sess)
+	} else {
+		m.removeFromUserQueue(sess)
 	}
-
-	// 如果 session 持有 slotToken：
-	// - slot 仍活跃：不要 delete(slotToSession)，避免提前断开 slot->session 的关系
-	// - slot 已不活跃：可以删映射
-	if sess.SlotToken != "" {
-		if m.activeSlots[sess.SlotToken] == nil {
-			delete(m.slotToSession, sess.SlotToken)
-		}
+	if sess.SlotToken != "" && m.activeSlots[sess.SlotToken] == nil {
+		delete(m.slotToSession, sess.SlotToken)
 	}
-
 	delete(m.sessions, sess.Token)
 }
 
+// Core: acquire
 func (m *fairQueueManager) acquire(user *model.User, ip string) (fairQueueResult, error) {
 	if user == nil {
 		return fairQueueResult{}, errors.New("user required")
 	}
 
-	maxSlotsHost := userDownloadConcurrency(user)
-	maxSlotsIP := 0
-	if user.IsGuest() && ip != "" {
-		maxSlotsIP = ipDownloadConcurrency()
-	}
-	if maxSlotsHost <= 0 && maxSlotsIP <= 0 {
-		return fairQueueResult{Result: "granted"}, nil
-	}
-
+	isGuest := user.IsGuest()
 	cfg := fairQueueConfig()
 	m.ensureGC()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Check global waiter limit
 	if m.globalWaiters >= fqGlobalMaxWaiters(cfg) {
 		return fairQueueResult{
 			Result:     "overloaded",
@@ -407,96 +423,55 @@ func (m *fairQueueManager) acquire(user *model.User, ip string) (fairQueueResult
 		}, nil
 	}
 
-	host := fairQueueHostKey(user)
-	if host == "" {
-		return fairQueueResult{}, errors.New("host required")
+	if isGuest {
+		return m.acquireGuestLocked(ip, cfg)
 	}
-	if max := fqMaxWaitersPerHost(cfg); max > 0 && len(m.hostQueues[host]) >= max {
+	return m.acquireUserLocked(user, cfg)
+}
+
+func (m *fairQueueManager) acquireGuestLocked(ip string, cfg conf.FairQueue) (fairQueueResult, error) {
+	if ip == "" {
+		return fairQueueResult{}, errors.New("guest requires IP")
+	}
+
+	ipLimit := ipDownloadConcurrency()
+	guestLimit := guestDownloadConcurrency()
+
+	// Check per-IP waiter limit
+	if max := cfg.MaxWaitersPerIP; max > 0 && len(m.ipQueues[ip]) >= max {
 		return fairQueueResult{
 			Result:     "overloaded",
 			RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
-			Reason:     "host_waiters",
+			Reason:     "ip_waiters",
 		}, nil
 	}
-	if maxSlotsIP > 0 && ip != "" {
-		key := fairQueueIPKey(ip)
-		if max := cfg.MaxWaitersPerIP; max > 0 && m.ipPending[key] >= max {
-			return fairQueueResult{
-				Result:     "overloaded",
-				RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
-				Reason:     "ip_waiters",
-			}, nil
+
+	// Fast path: this IP has no pending AND has capacity AND guest total has capacity
+	// Note: we don't check guestGlobalQueue - different IPs are independent
+	canFastPath := len(m.ipQueues[ip]) == 0
+	if canFastPath {
+		ipOK := ipLimit <= 0 || m.ipActive[ip] < ipLimit
+		guestOK := guestLimit <= 0 || m.guestTotalActive < guestLimit
+		if ipOK && guestOK {
+			return m.grantGuestSlotLocked(ip, ipLimit)
 		}
 	}
 
-	// Fast path: if slots are available for this request, grant immediately
-	// This avoids the pending→poll roundtrip which can cause timeout issues for new IPs
-	//
-	// For guest users with IP-based limiting, we check if THIS IP has pending requests,
-	// not whether the entire "guest" host queue is empty. This allows new IPs to be
-	// granted directly even when other guest IPs are queued.
-	canTryFastPath := false
-	if maxSlotsIP > 0 && ip != "" {
-		// For IP-limited requests (guest with IP), check if THIS IP has pending requests
-		key := fairQueueIPKey(ip)
-		canTryFastPath = m.ipPending[key] == 0
-	} else {
-		// For user-limited requests, check the host queue
-		canTryFastPath = len(m.hostQueues[host]) == 0
-	}
-
-	if canTryFastPath {
-		canGrant := true
-		if maxSlotsHost > 0 && m.hostActive[host] >= maxSlotsHost {
-			canGrant = false
-		}
-		if canGrant && maxSlotsIP > 0 && ip != "" {
-			key := fairQueueIPKey(ip)
-			if m.ipActive[key] >= maxSlotsIP {
-				canGrant = false
-			}
-		}
-		if canGrant {
-			// Directly grant a slot
-			slotToken := random.String(16)
-			now := time.Now()
-			slot := &fairQueueSlot{
-				Token:        slotToken,
-				Host:         host,
-				IP:           ip,
-				AcquiredAt:   now,
-				MaxSlotsHost: maxSlotsHost,
-			}
-			m.activeSlots[slotToken] = slot
-			if maxSlotsHost > 0 {
-				m.hostActive[host]++
-			}
-			if maxSlotsIP > 0 && ip != "" {
-				key := fairQueueIPKey(ip)
-				m.ipActive[key]++
-			}
-			return fairQueueResult{
-				Result:    "granted",
-				SlotToken: slotToken,
-			}, nil
-		}
-	}
-
-	// Slow path: need to queue and wait
+	// Slow path: create pending session
 	token := random.String(16)
 	now := time.Now()
 	sess := &fairQueueSession{
-		Token:        token,
-		Host:         host,
-		IP:           ip,
-		CreatedAt:    now,
-		LastSeenAt:   now,
-		State:        sessionPending,
-		MaxSlotsHost: maxSlotsHost,
-		MaxSlotsIP:   maxSlotsIP,
+		Token:      token,
+		IP:         ip,
+		IsGuest:    true,
+		CreatedAt:  now,
+		LastSeenAt: now,
+		State:      sessionPending,
+		MaxSlotsIP: ipLimit,
 	}
 	m.sessions[token] = sess
-	m.trackWaiter(sess)
+	m.addToIPQueue(sess)
+	m.addToGlobalQueue(sess)
 
 	return fairQueueResult{
 		Result:     "pending",
@@ -505,6 +480,92 @@ func (m *fairQueueManager) acquire(user *model.User, ip string) (fairQueueResult
 	}, nil
 }
 
+func (m *fairQueueManager) acquireUserLocked(user *model.User, cfg conf.FairQueue) (fairQueueResult, error) {
+	userKey := fmt.Sprintf("u:%d", user.ID)
+	userLimit := userDownloadConcurrency(user)
+
+	if userLimit <= 0 {
+		return fairQueueResult{Result: "granted"}, nil
+	}
+
+	// Check per-user waiter limit
+	if max := fqMaxWaitersPerHost(cfg); max > 0 && len(m.userQueues[userKey]) >= max {
+		return fairQueueResult{
+			Result:     "overloaded",
+			RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
+			Reason:     "user_waiters",
+		}, nil
+	}
+
+	// Fast path
+	if len(m.userQueues[userKey]) == 0 && m.userActive[userKey] < userLimit {
+		return m.grantUserSlotLocked(userKey, userLimit)
+	}
+
+	// Slow path
+	token := random.String(16)
+	now := time.Now()
+	sess := &fairQueueSession{
+		Token:        token,
+		UserKey:      userKey,
+		IsGuest:      false,
+		CreatedAt:    now,
+		LastSeenAt:   now,
+		State:        sessionPending,
+		MaxSlotsUser: userLimit,
+	}
+	m.sessions[token] = sess
+	m.addToUserQueue(sess)
+
+	return fairQueueResult{
+		Result:     "pending",
+		QueryToken: token,
+		RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
+	}, nil
+}
+
+func (m *fairQueueManager) grantGuestSlotLocked(ip string, ipLimit int) (fairQueueResult, error) {
+	slotToken := random.String(16)
+	now := time.Now()
+	slot := &fairQueueSlot{
+		Token:      slotToken,
+		IP:         ip,
+		IsGuest:    true,
+		AcquiredAt: now,
+	}
+	m.activeSlots[slotToken] = slot
+	if ipLimit > 0 {
+		m.ipActive[ip]++
+	}
+	m.guestTotalActive++
+
+	return fairQueueResult{
+		Result:    "granted",
+		SlotToken: slotToken,
+	}, nil
+}
+
+func (m *fairQueueManager) grantUserSlotLocked(userKey string, userLimit int) (fairQueueResult, error) {
+	slotToken := random.String(16)
+	now := time.Now()
+	slot := &fairQueueSlot{
+		Token:      slotToken,
+		UserKey:    userKey,
+		IsGuest:    false,
+		AcquiredAt: now,
+	}
+	m.activeSlots[slotToken] = slot
+	if userLimit > 0 {
+		m.userActive[userKey]++
+	}
+
+	return fairQueueResult{
+		Result:    "granted",
+		SlotToken: slotToken,
+	}, nil
+}
+
+// Core: poll
 func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 	if queryToken == "" {
 		return fairQueueResult{}, errors.New("queryToken required")
@@ -534,8 +595,7 @@ func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 	}
 	sess.LastSeenAt = now
 
-	switch sess.State {
-	case sessionGranted:
+	if sess.State == sessionGranted {
 		return fairQueueResult{
 			Result:     "granted",
 			QueryToken: sess.Token,
@@ -543,28 +603,20 @@ func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 		}, nil
 	}
 
-	// For IP-limited sessions (guest with IP), we don't require being at the front of the host queue.
-	// Instead, we check if this specific IP can acquire a slot. This allows different IPs to progress
-	// independently even when they share the same "guest" host key.
-	//
-	// For user-limited sessions, we still require being at the front of the host queue to ensure
-	// fair ordering among the same user's requests.
-
-	if !sess.isIPLimited() {
-		// LimitByUser mode: must be at the front of the host queue (FIFO ordering)
-		queue := m.hostQueues[sess.Host]
-		if len(queue) == 0 || queue[0] != sess.Token {
-			return fairQueueResult{
-				Result:     "pending",
-				QueryToken: sess.Token,
-				RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
-			}, nil
-		}
+	if sess.IsGuest {
+		return m.pollGuestLocked(sess, cfg)
 	}
-	// LimitByIP mode: skip queue position check - acquire slot if this IP has capacity
-	// if this IP has capacity, regardless of queue position.
+	return m.pollUserLocked(sess, cfg)
+}
 
-	if !m.canAcquireLocked(sess) {
+func (m *fairQueueManager) pollGuestLocked(sess *fairQueueSession, cfg conf.FairQueue) (fairQueueResult, error) {
+	ip := sess.IP
+	ipLimit := sess.MaxSlotsIP
+	guestLimit := guestDownloadConcurrency()
+
+	// Check 1: at front of IP queue
+	ipQueue := m.ipQueues[ip]
+	if len(ipQueue) == 0 || ipQueue[0] != sess.Token {
 		return fairQueueResult{
 			Result:     "pending",
 			QueryToken: sess.Token,
@@ -572,31 +624,55 @@ func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 		}, nil
 	}
 
-	// 发放 slot
+	// Check 2: IP has capacity
+	if ipLimit > 0 && m.ipActive[ip] >= ipLimit {
+		return fairQueueResult{
+			Result:     "pending",
+			QueryToken: sess.Token,
+			RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
+		}, nil
+	}
+
+	// Check 3: at front of global queue
+	if len(m.guestGlobalQueue) == 0 || m.guestGlobalQueue[0] != sess.Token {
+		return fairQueueResult{
+			Result:     "pending",
+			QueryToken: sess.Token,
+			RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
+		}, nil
+	}
+
+	// Check 4: global guest has capacity
+	if guestLimit > 0 && m.guestTotalActive >= guestLimit {
+		return fairQueueResult{
+			Result:     "pending",
+			QueryToken: sess.Token,
+			RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
+		}, nil
+	}
+
+	// All checks passed, grant the slot
 	slotToken := random.String(16)
+	now := time.Now()
 	slot := &fairQueueSlot{
-		Token:        slotToken,
-		Host:         sess.Host,
-		IP:           sess.IP,
-		AcquiredAt:   now,
-		MaxSlotsHost: sess.MaxSlotsHost,
+		Token:      slotToken,
+		IP:         ip,
+		IsGuest:    true,
+		AcquiredAt: now,
 	}
 	m.activeSlots[slotToken] = slot
 	m.slotToSession[slotToken] = sess.Token
 
-	if sess.MaxSlotsHost > 0 {
-		m.hostActive[sess.Host]++
+	if ipLimit > 0 {
+		m.ipActive[ip]++
 	}
-	if sess.MaxSlotsIP > 0 && sess.IP != "" {
-		key := fairQueueIPKey(sess.IP)
-		m.ipActive[key]++
-	}
+	m.guestTotalActive++
 
 	sess.State = sessionGranted
 	sess.SlotToken = slotToken
-	m.untrackWaiter(sess)
+	m.removeFromIPQueue(sess)
+	m.removeFromGlobalQueue(sess)
 
-	// 修复点：granted cleanup 不再“强删 granted session”，只会在 slot 已经不存在时才清 session
 	m.scheduleGrantedCleanupLocked(sess.Token, fqGrantedCleanupDelay(cfg))
 
 	return fairQueueResult{
@@ -606,7 +682,58 @@ func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 	}, nil
 }
 
-// 修复点：cleanup 只在 slot 已经不活跃（已 release / 已 zombie）时才 remove session
+func (m *fairQueueManager) pollUserLocked(sess *fairQueueSession, cfg conf.FairQueue) (fairQueueResult, error) {
+	userKey := sess.UserKey
+	userLimit := sess.MaxSlotsUser
+
+	// Check 1: at front of user queue
+	userQueue := m.userQueues[userKey]
+	if len(userQueue) == 0 || userQueue[0] != sess.Token {
+		return fairQueueResult{
+			Result:     "pending",
+			QueryToken: sess.Token,
+			RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
+		}, nil
+	}
+
+	// Check 2: user has capacity
+	if userLimit > 0 && m.userActive[userKey] >= userLimit {
+		return fairQueueResult{
+			Result:     "pending",
+			QueryToken: sess.Token,
+			RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
+		}, nil
+	}
+
+	// Grant the slot
+	slotToken := random.String(16)
+	now := time.Now()
+	slot := &fairQueueSlot{
+		Token:      slotToken,
+		UserKey:    userKey,
+		IsGuest:    false,
+		AcquiredAt: now,
+	}
+	m.activeSlots[slotToken] = slot
+	m.slotToSession[slotToken] = sess.Token
+
+	if userLimit > 0 {
+		m.userActive[userKey]++
+	}
+
+	sess.State = sessionGranted
+	sess.SlotToken = slotToken
+	m.removeFromUserQueue(sess)
+
+	m.scheduleGrantedCleanupLocked(sess.Token, fqGrantedCleanupDelay(cfg))
+
+	return fairQueueResult{
+		Result:     "granted",
+		QueryToken: sess.Token,
+		SlotToken:  slotToken,
+	}, nil
+}
+
 func (m *fairQueueManager) scheduleGrantedCleanupLocked(token string, delay time.Duration) {
 	sess := m.sessions[token]
 	if sess == nil || sess.CleanupScheduled {
@@ -614,7 +741,6 @@ func (m *fairQueueManager) scheduleGrantedCleanupLocked(token string, delay time
 	}
 	sess.CleanupScheduled = true
 	if delay <= 0 {
-		// 立即清理也要遵循“slot 不活跃才清”的规则
 		if sess.State != sessionGranted || sess.SlotToken == "" || m.activeSlots[sess.SlotToken] == nil {
 			m.removeSessionLocked(sess)
 		}
@@ -630,32 +756,13 @@ func (m *fairQueueManager) scheduleGrantedCleanupLocked(token string, delay time
 		if sess == nil || sess.State != sessionGranted {
 			return
 		}
-
-		// 只有当 slot 已经不在 activeSlots，才清 session
 		if sess.SlotToken == "" || m.activeSlots[sess.SlotToken] == nil {
 			m.removeSessionLocked(sess)
 		}
 	}()
 }
 
-func (m *fairQueueManager) canAcquireLocked(sess *fairQueueSession) bool {
-	if sess == nil {
-		return false
-	}
-	if sess.MaxSlotsHost > 0 {
-		if m.hostActive[sess.Host] >= sess.MaxSlotsHost {
-			return false
-		}
-	}
-	if sess.MaxSlotsIP > 0 && sess.IP != "" {
-		key := fairQueueIPKey(sess.IP)
-		if m.ipActive[key] >= sess.MaxSlotsIP {
-			return false
-		}
-	}
-	return true
-}
-
+// Core: cancel
 func (m *fairQueueManager) cancel(queryToken string) bool {
 	if queryToken == "" {
 		return false
@@ -677,6 +784,7 @@ func (m *fairQueueManager) cancel(queryToken string) bool {
 	return true
 }
 
+// Core: release
 func (m *fairQueueManager) release(slotToken string, hitAt time.Time) error {
 	if slotToken == "" {
 		return nil
@@ -695,6 +803,7 @@ func (m *fairQueueManager) release(slotToken string, hitAt time.Time) error {
 		return nil
 	}
 	slot.Releasing = true
+	isGuest := slot.IsGuest
 	m.mu.Unlock()
 
 	minHoldMs := cfg.MinSlotHoldMs
@@ -716,16 +825,20 @@ func (m *fairQueueManager) release(slotToken string, hitAt time.Time) error {
 		if *cfg.SmoothReleaseIntervalMs > 0 {
 			interval = time.Duration(*cfg.SmoothReleaseIntervalMs) * time.Millisecond
 		}
-	} else if minHoldMs > 0 && slot.MaxSlotsHost > 0 {
-		interval = time.Duration(minHoldMs/int64(slot.MaxSlotsHost)) * time.Millisecond
 	}
 
 	if interval > 0 {
 		m.mu.Lock()
-		releaser := m.smoothReleaser[slot.Host]
+		var key string
+		if isGuest {
+			key = "guest"
+		} else {
+			key = slot.UserKey
+		}
+		releaser := m.smoothReleaser[key]
 		if releaser == nil {
 			releaser = &smoothHostReleaser{}
-			m.smoothReleaser[slot.Host] = releaser
+			m.smoothReleaser[key] = releaser
 		}
 		target = releaser.nextReleaseAfter(target, interval)
 		m.mu.Unlock()
@@ -758,100 +871,116 @@ func (m *fairQueueManager) releaseSlotLocked(slot *fairQueueSlot) {
 		return
 	}
 
-	// active 计数回收
-	if slot.Host != "" {
-		if v := m.hostActive[slot.Host]; v > 1 {
-			m.hostActive[slot.Host] = v - 1
-		} else {
-			delete(m.hostActive, slot.Host)
+	if slot.IsGuest {
+		if slot.IP != "" {
+			if v := m.ipActive[slot.IP]; v > 1 {
+				m.ipActive[slot.IP] = v - 1
+			} else {
+				delete(m.ipActive, slot.IP)
+			}
 		}
-	}
-	if slot.IP != "" {
-		key := fairQueueIPKey(slot.IP)
-		if v := m.ipActive[key]; v > 1 {
-			m.ipActive[key] = v - 1
-		} else {
-			delete(m.ipActive, key)
+		if m.guestTotalActive > 0 {
+			m.guestTotalActive--
+		}
+	} else {
+		if slot.UserKey != "" {
+			if v := m.userActive[slot.UserKey]; v > 1 {
+				m.userActive[slot.UserKey] = v - 1
+			} else {
+				delete(m.userActive, slot.UserKey)
+			}
 		}
 	}
 
-	// 删除 slot 本体
 	delete(m.activeSlots, slot.Token)
 
-	// 如果能找到 session，则顺带清理 session（现在不会因为 cleanup 提前删掉 slotToSession 而失联）
 	if sessToken := m.slotToSession[slot.Token]; sessToken != "" {
 		if sess := m.sessions[sessToken]; sess != nil {
 			m.removeSessionLocked(sess)
 		} else {
-			// session 已不在（可能手动删/其他原因），把映射清掉避免泄漏
 			delete(m.slotToSession, slot.Token)
 		}
 	}
 }
 
+// FastAcquire for sync path (non-polling)
 func (m *fairQueueManager) fastAcquire(user *model.User, ip string) (string, time.Time, error) {
 	if user == nil {
 		return "", time.Time{}, nil
 	}
-	maxSlotsHost := userDownloadConcurrency(user)
-	maxSlotsIP := 0
-	if user.IsGuest() && ip != "" {
-		maxSlotsIP = ipDownloadConcurrency()
-	}
-	if maxSlotsHost <= 0 && maxSlotsIP <= 0 {
-		return "", time.Time{}, nil
-	}
 
+	isGuest := user.IsGuest()
 	m.ensureGC()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	host := fairQueueHostKey(user)
-	if host == "" {
-		return "", time.Time{}, errors.New("host required")
-	}
-	if len(m.hostQueues[host]) > 0 {
-		return "", time.Time{}, errs.ExceedUserRateLimit
-	}
-	if maxSlotsIP > 0 && ip != "" {
-		key := fairQueueIPKey(ip)
-		if m.ipPending[key] > 0 {
+	if isGuest {
+		if ip == "" {
+			return "", time.Time{}, errors.New("guest requires IP")
+		}
+		ipLimit := ipDownloadConcurrency()
+		guestLimit := guestDownloadConcurrency()
+
+		// Must have no pending
+		if len(m.ipQueues[ip]) > 0 || len(m.guestGlobalQueue) > 0 {
 			return "", time.Time{}, errs.ExceedIPRateLimit
 		}
-	}
-
-	if maxSlotsHost > 0 && m.hostActive[host] >= maxSlotsHost {
-		return "", time.Time{}, errs.ExceedUserRateLimit
-	}
-	if maxSlotsIP > 0 && ip != "" {
-		key := fairQueueIPKey(ip)
-		if m.ipActive[key] >= maxSlotsIP {
+		// Check IP capacity
+		if ipLimit > 0 && m.ipActive[ip] >= ipLimit {
 			return "", time.Time{}, errs.ExceedIPRateLimit
 		}
+		// Check guest capacity
+		if guestLimit > 0 && m.guestTotalActive >= guestLimit {
+			return "", time.Time{}, errs.ExceedUserRateLimit
+		}
+
+		// Grant
+		slotToken := random.String(16)
+		now := time.Now()
+		slot := &fairQueueSlot{
+			Token:      slotToken,
+			IP:         ip,
+			IsGuest:    true,
+			AcquiredAt: now,
+		}
+		m.activeSlots[slotToken] = slot
+		if ipLimit > 0 {
+			m.ipActive[ip]++
+		}
+		m.guestTotalActive++
+		return slotToken, now, nil
 	}
 
-	token := random.String(16)
+	// User path
+	userKey := fmt.Sprintf("u:%d", user.ID)
+	userLimit := userDownloadConcurrency(user)
+
+	if userLimit <= 0 {
+		return "", time.Time{}, nil
+	}
+
+	if len(m.userQueues[userKey]) > 0 {
+		return "", time.Time{}, errs.ExceedUserRateLimit
+	}
+	if m.userActive[userKey] >= userLimit {
+		return "", time.Time{}, errs.ExceedUserRateLimit
+	}
+
+	slotToken := random.String(16)
 	now := time.Now()
 	slot := &fairQueueSlot{
-		Token:        token,
-		Host:         host,
-		IP:           ip,
-		AcquiredAt:   now,
-		MaxSlotsHost: maxSlotsHost,
+		Token:      slotToken,
+		UserKey:    userKey,
+		IsGuest:    false,
+		AcquiredAt: now,
 	}
-	m.activeSlots[token] = slot
-	if maxSlotsHost > 0 {
-		m.hostActive[host]++
-	}
-	if maxSlotsIP > 0 && ip != "" {
-		key := fairQueueIPKey(ip)
-		m.ipActive[key]++
-	}
-
-	return token, now, nil
+	m.activeSlots[slotToken] = slot
+	m.userActive[userKey]++
+	return slotToken, now, nil
 }
 
+// Public API
 func FairQueueAcquire(user *model.User, ip string) (fairQueueResult, error) {
 	return fairQueue.acquire(user, ip)
 }
@@ -870,21 +999,4 @@ func FairQueueRelease(slotToken string, hitAt time.Time) error {
 
 func FairQueueFastAcquire(user *model.User, ip string) (string, time.Time, error) {
 	return fairQueue.fastAcquire(user, ip)
-}
-
-func userDownloadConcurrency(user *model.User) int {
-	if user == nil {
-		return 0
-	}
-	if user.DownloadConcurrency != nil {
-		return *user.DownloadConcurrency
-	}
-	if user.IsGuest() {
-		return setting.GetInt(conf.GuestDownloadConcurrency, defaultGuestDownloadConcurrency)
-	}
-	return setting.GetInt(conf.UserDefaultDownloadConcurrency, defaultUserDownloadConcurrency)
-}
-
-func ipDownloadConcurrency() int {
-	return setting.GetInt(conf.IPDownloadConcurrency, defaultIPDownloadConcurrency)
 }

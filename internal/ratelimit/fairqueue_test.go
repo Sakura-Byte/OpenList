@@ -253,3 +253,66 @@ func TestFairQueueNewIPFastPathWhileOthersQueued(t *testing.T) {
 	}
 	waitForSlotRelease(t, fourth.SlotToken)
 }
+
+// TestFairQueueGuestDualLock verifies that guests are limited by BOTH:
+// 1. Per-IP concurrency (each IP independent)
+// 2. Total guest slots (all guests share, FIFO when full)
+func TestFairQueueGuestDualLock(t *testing.T) {
+	setupFairQueueTest(t, map[string]int{
+		conf.GuestDownloadConcurrency: 2, // Total guest limit = 2
+		conf.IPDownloadConcurrency:    5, // Per-IP limit = 5 (higher than total)
+	})
+
+	guest := &model.User{ID: 1, Role: model.GUEST}
+
+	// IP1 gets slot 1 (guestTotal=1)
+	r1, err := FairQueueAcquire(guest, "1.1.1.1")
+	if err != nil {
+		t.Fatalf("acquire r1: %v", err)
+	}
+	if r1.Result != "granted" || r1.SlotToken == "" {
+		t.Fatalf("expected r1 granted, got: %#v", r1)
+	}
+
+	// IP2 gets slot 2 (guestTotal=2, now at limit)
+	r2, err := FairQueueAcquire(guest, "2.2.2.2")
+	if err != nil {
+		t.Fatalf("acquire r2: %v", err)
+	}
+	if r2.Result != "granted" || r2.SlotToken == "" {
+		t.Fatalf("expected r2 granted, got: %#v", r2)
+	}
+
+	// IP3 should be PENDING (guest total limit reached, even though IP3 has 0 active)
+	r3, err := FairQueueAcquire(guest, "3.3.3.3")
+	if err != nil {
+		t.Fatalf("acquire r3: %v", err)
+	}
+	if r3.Result != "pending" {
+		t.Fatalf("expected r3 pending due to guest total limit, got: %#v", r3)
+	}
+
+	// Release one slot, IP3 should get granted
+	if err := FairQueueRelease(r1.SlotToken, time.Now()); err != nil {
+		t.Fatalf("release r1: %v", err)
+	}
+	waitForSlotRelease(t, r1.SlotToken)
+
+	poll3, err := FairQueuePoll(r3.QueryToken)
+	if err != nil {
+		t.Fatalf("poll r3: %v", err)
+	}
+	if poll3.Result != "granted" || poll3.SlotToken == "" {
+		t.Fatalf("expected r3 granted after release, got: %#v", poll3)
+	}
+
+	// Cleanup
+	if err := FairQueueRelease(r2.SlotToken, time.Now()); err != nil {
+		t.Fatalf("release r2: %v", err)
+	}
+	waitForSlotRelease(t, r2.SlotToken)
+	if err := FairQueueRelease(poll3.SlotToken, time.Now()); err != nil {
+		t.Fatalf("release r3: %v", err)
+	}
+	waitForSlotRelease(t, poll3.SlotToken)
+}
