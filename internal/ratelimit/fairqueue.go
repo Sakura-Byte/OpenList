@@ -169,8 +169,8 @@ func fqGrantedCleanupDelay(cfg conf.FairQueue) time.Duration {
 }
 
 func fairQueueHostKey(user *model.User) string {
-	if user == nil {
-		return ""
+	if user == nil || user.IsGuest() {
+		return "guest"
 	}
 	return fmt.Sprintf("u:%d", user.ID)
 }
