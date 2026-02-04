@@ -79,7 +79,6 @@ type TasksConfig struct {
 type FairQueue struct {
 	MaxWaitMs                  int64  `json:"max_wait_ms" env:"MAX_WAIT_MS"`
 	PollIntervalMs             int64  `json:"poll_interval_ms" env:"POLL_INTERVAL_MS"`
-	PollWindowMs               int64  `json:"poll_window_ms" env:"POLL_WINDOW_MS"`
 	MinSlotHoldMs              int64  `json:"min_slot_hold_ms" env:"MIN_SLOT_HOLD_MS"`
 	SmoothReleaseIntervalMs    *int64 `json:"smooth_release_interval_ms" env:"SMOOTH_RELEASE_INTERVAL_MS"`
 	GlobalMaxWaiters           int    `json:"global_max_waiters" env:"GLOBAL_MAX_WAITERS"`
@@ -236,7 +235,6 @@ func DefaultConfig(dataDir string) *Config {
 		FairQueue: FairQueue{
 			MaxWaitMs:                  20000,
 			PollIntervalMs:             500,
-			PollWindowMs:               6000,
 			MinSlotHoldMs:              0,
 			SmoothReleaseIntervalMs:    nil,
 			GlobalMaxWaiters:           500,

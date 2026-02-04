@@ -364,6 +364,60 @@ func (m *fairQueueManager) acquire(user *model.User, ip string) (fairQueueResult
 		}
 	}
 
+	// Fast path: if slots are available for this request, grant immediately
+	// This avoids the pending→poll roundtrip which can cause timeout issues for new IPs
+	//
+	// For guest users with IP-based limiting, we check if THIS IP has pending requests,
+	// not whether the entire "guest" host queue is empty. This allows new IPs to be
+	// granted directly even when other guest IPs are queued.
+	canTryFastPath := false
+	if maxSlotsIP > 0 && ip != "" {
+		// For IP-limited requests (guest with IP), check if THIS IP has pending requests
+		key := fairQueueIPKey(ip)
+		canTryFastPath = m.ipPending[key] == 0
+	} else {
+		// For user-limited requests, check the host queue
+		canTryFastPath = len(m.hostQueues[host]) == 0
+	}
+
+	if canTryFastPath {
+		canGrant := true
+		if maxSlotsHost > 0 && m.hostActive[host] >= maxSlotsHost {
+			canGrant = false
+		}
+		if canGrant && maxSlotsIP > 0 && ip != "" {
+			key := fairQueueIPKey(ip)
+			if m.ipActive[key] >= maxSlotsIP {
+				canGrant = false
+			}
+		}
+		if canGrant {
+			// Directly grant a slot
+			slotToken := random.String(16)
+			now := time.Now()
+			slot := &fairQueueSlot{
+				Token:        slotToken,
+				Host:         host,
+				IP:           ip,
+				AcquiredAt:   now,
+				MaxSlotsHost: maxSlotsHost,
+			}
+			m.activeSlots[slotToken] = slot
+			if maxSlotsHost > 0 {
+				m.hostActive[host]++
+			}
+			if maxSlotsIP > 0 && ip != "" {
+				key := fairQueueIPKey(ip)
+				m.ipActive[key]++
+			}
+			return fairQueueResult{
+				Result:    "granted",
+				SlotToken: slotToken,
+			}, nil
+		}
+	}
+
+	// Slow path: need to queue and wait
 	token := random.String(16)
 	now := time.Now()
 	sess := &fairQueueSession{

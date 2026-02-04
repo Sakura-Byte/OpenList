@@ -60,14 +60,16 @@ func TestFairQueueGuestIPConcurrency(t *testing.T) {
 	user := &model.User{ID: 1, Role: model.GUEST}
 	ip := "1.2.3.4"
 
+	// First acquire should be granted directly (fast path) since no one is waiting
 	first, err := FairQueueAcquire(user, ip)
 	if err != nil {
 		t.Fatalf("acquire first: %v", err)
 	}
-	if first.Result != "pending" || first.QueryToken == "" {
-		t.Fatalf("expected pending query token, got: %#v", first)
+	if first.Result != "granted" || first.SlotToken == "" {
+		t.Fatalf("expected first granted directly, got: %#v", first)
 	}
 
+	// Second acquire should be pending since IP limit is 1
 	second, err := FairQueueAcquire(user, ip)
 	if err != nil {
 		t.Fatalf("acquire second: %v", err)
@@ -81,29 +83,13 @@ func TestFairQueueGuestIPConcurrency(t *testing.T) {
 		t.Fatalf("poll second: %v", err)
 	}
 	if pollSecond.Result != "pending" {
-		t.Fatalf("expected second pending before head, got: %#v", pollSecond)
-	}
-
-	pollFirst, err := FairQueuePoll(first.QueryToken)
-	if err != nil {
-		t.Fatalf("poll first: %v", err)
-	}
-	if pollFirst.Result != "granted" || pollFirst.SlotToken == "" {
-		t.Fatalf("expected first granted, got: %#v", pollFirst)
-	}
-
-	pollSecond, err = FairQueuePoll(second.QueryToken)
-	if err != nil {
-		t.Fatalf("poll second after first grant: %v", err)
-	}
-	if pollSecond.Result != "pending" {
 		t.Fatalf("expected second pending due to ip limit, got: %#v", pollSecond)
 	}
 
-	if err := FairQueueRelease(pollFirst.SlotToken, time.Now()); err != nil {
+	if err := FairQueueRelease(first.SlotToken, time.Now()); err != nil {
 		t.Fatalf("release first slot: %v", err)
 	}
-	waitForSlotRelease(t, pollFirst.SlotToken)
+	waitForSlotRelease(t, first.SlotToken)
 
 	pollSecond, err = FairQueuePoll(second.QueryToken)
 	if err != nil {
@@ -126,22 +112,24 @@ func TestFairQueueUserConcurrency(t *testing.T) {
 
 	user := &model.User{ID: 42, Role: model.GENERAL}
 
+	// First acquire should be granted directly (fast path)
 	first, err := FairQueueAcquire(user, "")
 	if err != nil {
 		t.Fatalf("acquire first: %v", err)
 	}
-	pollFirst, err := FairQueuePoll(first.QueryToken)
-	if err != nil {
-		t.Fatalf("poll first: %v", err)
-	}
-	if pollFirst.Result != "granted" || pollFirst.SlotToken == "" {
-		t.Fatalf("expected first granted, got: %#v", pollFirst)
+	if first.Result != "granted" || first.SlotToken == "" {
+		t.Fatalf("expected first granted directly, got: %#v", first)
 	}
 
+	// Second acquire should be pending since user limit is 1
 	second, err := FairQueueAcquire(user, "")
 	if err != nil {
 		t.Fatalf("acquire second: %v", err)
 	}
+	if second.Result != "pending" || second.QueryToken == "" {
+		t.Fatalf("expected pending query token, got: %#v", second)
+	}
+
 	pollSecond, err := FairQueuePoll(second.QueryToken)
 	if err != nil {
 		t.Fatalf("poll second: %v", err)
@@ -150,10 +138,10 @@ func TestFairQueueUserConcurrency(t *testing.T) {
 		t.Fatalf("expected second pending due to user limit, got: %#v", pollSecond)
 	}
 
-	if err := FairQueueRelease(pollFirst.SlotToken, time.Now()); err != nil {
+	if err := FairQueueRelease(first.SlotToken, time.Now()); err != nil {
 		t.Fatalf("release first slot: %v", err)
 	}
-	waitForSlotRelease(t, pollFirst.SlotToken)
+	waitForSlotRelease(t, first.SlotToken)
 
 	pollSecond, err = FairQueuePoll(second.QueryToken)
 	if err != nil {
@@ -177,20 +165,91 @@ func TestFairQueueFastAcquireFailFast(t *testing.T) {
 	user := &model.User{ID: 7, Role: model.GUEST}
 	ip := "5.6.7.8"
 
-	pending, err := FairQueueAcquire(user, ip)
+	// First acquire should be granted directly (fast path)
+	first, err := FairQueueAcquire(user, ip)
 	if err != nil {
-		t.Fatalf("acquire pending: %v", err)
+		t.Fatalf("acquire first: %v", err)
 	}
-	if pending.Result != "pending" || pending.QueryToken == "" {
-		t.Fatalf("expected pending query token, got: %#v", pending)
+	if first.Result != "granted" || first.SlotToken == "" {
+		t.Fatalf("expected first granted directly, got: %#v", first)
 	}
 
+	// FastAcquire should fail fast since there's already an active slot
 	_, _, err = FairQueueFastAcquire(user, ip)
-	if !errors.Is(err, errs.ExceedUserRateLimit) {
-		t.Fatalf("expected fail fast user limit, got: %v", err)
+	if !errors.Is(err, errs.ExceedUserRateLimit) && !errors.Is(err, errs.ExceedIPRateLimit) {
+		t.Fatalf("expected fail fast rate limit, got: %v", err)
 	}
 
-	if !FairQueueCancel(pending.QueryToken) {
-		t.Fatalf("cancel pending session failed")
+	// Cleanup
+	if err := FairQueueRelease(first.SlotToken, time.Now()); err != nil {
+		t.Fatalf("release first slot: %v", err)
 	}
+	waitForSlotRelease(t, first.SlotToken)
+}
+
+// TestFairQueueNewIPFastPathWhileOthersQueued verifies that a new guest IP can
+// get a fast path grant even when other guest IPs are waiting in the queue.
+// This prevents the "timeout for ip" error for first-time download IPs.
+func TestFairQueueNewIPFastPathWhileOthersQueued(t *testing.T) {
+	setupFairQueueTest(t, map[string]int{
+		conf.GuestDownloadConcurrency: 9999, // High enough to not be the limiting factor
+		conf.IPDownloadConcurrency:    1,    // Each IP can only have 1 concurrent download
+	})
+
+	guest := &model.User{ID: 1, Role: model.GUEST}
+	ip1 := "10.0.0.1"
+	ip2 := "10.0.0.2"
+	ip3 := "10.0.0.3"
+
+	// IP1 gets the first slot
+	first, err := FairQueueAcquire(guest, ip1)
+	if err != nil {
+		t.Fatalf("acquire first: %v", err)
+	}
+	if first.Result != "granted" || first.SlotToken == "" {
+		t.Fatalf("expected first granted directly, got: %#v", first)
+	}
+
+	// IP1 tries to get a second slot, should be pending (IP limit = 1)
+	second, err := FairQueueAcquire(guest, ip1)
+	if err != nil {
+		t.Fatalf("acquire second: %v", err)
+	}
+	if second.Result != "pending" || second.QueryToken == "" {
+		t.Fatalf("expected second to be pending, got: %#v", second)
+	}
+
+	// Now we have IP1 queued. IP2 (a new IP with no pending or active) should still
+	// get a fast path grant, NOT be blocked by IP1's queue entry.
+	third, err := FairQueueAcquire(guest, ip2)
+	if err != nil {
+		t.Fatalf("acquire third (new IP): %v", err)
+	}
+	if third.Result != "granted" || third.SlotToken == "" {
+		t.Fatalf("BUG: new IP2 should get fast path grant, got: %#v", third)
+	}
+
+	// IP3 (another new IP) should also get fast path grant
+	fourth, err := FairQueueAcquire(guest, ip3)
+	if err != nil {
+		t.Fatalf("acquire fourth (new IP3): %v", err)
+	}
+	if fourth.Result != "granted" || fourth.SlotToken == "" {
+		t.Fatalf("BUG: new IP3 should get fast path grant, got: %#v", fourth)
+	}
+
+	// Cleanup
+	FairQueueCancel(second.QueryToken)
+	if err := FairQueueRelease(first.SlotToken, time.Now()); err != nil {
+		t.Fatalf("release first slot: %v", err)
+	}
+	waitForSlotRelease(t, first.SlotToken)
+	if err := FairQueueRelease(third.SlotToken, time.Now()); err != nil {
+		t.Fatalf("release third slot: %v", err)
+	}
+	waitForSlotRelease(t, third.SlotToken)
+	if err := FairQueueRelease(fourth.SlotToken, time.Now()); err != nil {
+		t.Fatalf("release fourth slot: %v", err)
+	}
+	waitForSlotRelease(t, fourth.SlotToken)
 }
