@@ -1,3 +1,42 @@
+/*
+Package ratelimit implements a fair queue system for download concurrency control.
+
+# Limit Modes
+
+The FairQueue enforces concurrency limits using two distinct modes:
+
+## LimitByIP (Guest Users)
+
+When a guest user requests a download:
+  - Host key: "guest" (shared by all guests)
+  - Limit enforced by: IP address
+  - Each IP can have up to `IPDownloadConcurrency` concurrent downloads
+  - Different IPs progress independently, even when other IPs are queued
+
+Example: IP-A and IP-B are both guests. IP-A has 1 active download (limit=1).
+IP-A's second request queues. IP-B's first request proceeds immediately.
+
+## LimitByUser (Registered Users)
+
+When a registered user requests a download:
+  - Host key: "u:<userID>" (unique per user)
+  - Limit enforced by: User ID
+  - Each user can have up to `UserDownloadConcurrency` concurrent downloads
+  - Requests from the same user are processed in FIFO order
+
+# Key Data Structures
+
+  - hostQueues: Maps host key → waiting session tokens (FIFO queue)
+  - hostActive: Maps host key → number of active slots
+  - ipActive: Maps IP address → number of active slots (for IP limiting)
+  - ipPending: Maps IP address → number of pending sessions (for IP limiting)
+
+# Flow Summary
+
+ 1. acquire(): Try fast path if slots available, otherwise create pending session
+ 2. poll(): Check if session can be granted; for IP-limited sessions, skip host queue check
+ 3. release(): Free the slot when download completes
+*/
 package ratelimit
 
 import (
@@ -35,27 +74,39 @@ const (
 	sessionGranted fairQueueSessionState = "GRANTED"
 )
 
+// fairQueueSession represents a waiting or granted download session.
+// The limit mode is determined by MaxSlotsIP:
+//   - MaxSlotsIP > 0 && IP != "": LimitByIP mode (guest users)
+//   - Otherwise: LimitByUser mode (registered users)
 type fairQueueSession struct {
-	Token            string
-	Host             string
-	IP               string
-	CreatedAt        time.Time
-	LastSeenAt       time.Time
-	State            fairQueueSessionState
-	SlotToken        string
-	MaxSlotsHost     int
-	MaxSlotsIP       int
-	WaiterTracked    bool
-	CleanupScheduled bool
+	Token            string                // Unique session identifier
+	Host             string                // Host key: "guest" for guests, "u:<id>" for users
+	IP               string                // Client IP address (used for IP limiting)
+	CreatedAt        time.Time             // Session creation time
+	LastSeenAt       time.Time             // Last poll time
+	State            fairQueueSessionState // PENDING or GRANTED
+	SlotToken        string                // Slot token if granted
+	MaxSlotsHost     int                   // User concurrency limit (always set, but ignored for IP-limited guests)
+	MaxSlotsIP       int                   // IP concurrency limit (>0 means LimitByIP mode)
+	WaiterTracked    bool                  // Whether session is in hostQueues
+	CleanupScheduled bool                  // Whether cleanup goroutine is scheduled
 }
 
+// isIPLimited returns true if this session uses IP-based limiting (guest user with IP).
+// IP-limited sessions can acquire slots independently of other IPs, while user-limited
+// sessions must wait in FIFO order within their host queue.
+func (s *fairQueueSession) isIPLimited() bool {
+	return s.MaxSlotsIP > 0 && s.IP != ""
+}
+
+// fairQueueSlot represents an active download slot.
 type fairQueueSlot struct {
-	Token        string
-	Host         string
-	IP           string
-	AcquiredAt   time.Time
-	MaxSlotsHost int
-	Releasing    bool
+	Token        string    // Unique slot identifier
+	Host         string    // Host key for this slot
+	IP           string    // Client IP (for IP-based active count)
+	AcquiredAt   time.Time // When slot was acquired
+	MaxSlotsHost int       // Copied from session for smooth release calculation
+	Releasing    bool      // Whether release is in progress
 }
 
 type smoothHostReleaser struct {
@@ -82,18 +133,32 @@ func (sr *smoothHostReleaser) nextReleaseAfter(base time.Time, interval time.Dur
 	return next
 }
 
+// fairQueueManager manages all fair queue state.
+// Thread-safe: all operations acquire mu before accessing state.
 type fairQueueManager struct {
-	mu             sync.Mutex
-	sessions       map[string]*fairQueueSession
-	hostQueues     map[string][]string
-	ipPending      map[string]int
-	activeSlots    map[string]*fairQueueSlot
-	hostActive     map[string]int
-	ipActive       map[string]int
-	slotToSession  map[string]string
+	mu sync.Mutex
+
+	// Session management
+	sessions      map[string]*fairQueueSession // queryToken → session
+	slotToSession map[string]string            // slotToken → queryToken
+
+	// Host-based queuing (for LimitByUser mode)
+	hostQueues map[string][]string // hostKey → ordered list of waiting queryTokens
+	hostActive map[string]int      // hostKey → count of active slots
+
+	// IP-based limiting (for LimitByIP mode)
+	ipPending map[string]int // IP → count of pending sessions
+	ipActive  map[string]int // IP → count of active slots
+
+	// Slot management
+	activeSlots map[string]*fairQueueSlot // slotToken → slot
+
+	// Rate smoothing for releases
 	smoothReleaser map[string]*smoothHostReleaser
-	globalWaiters  int
-	gcOnce         sync.Once
+
+	// Global state
+	globalWaiters int       // Total pending sessions across all hosts
+	gcOnce        sync.Once // Ensures GC goroutine starts only once
 }
 
 var fairQueue = newFairQueueManager()
@@ -478,14 +543,26 @@ func (m *fairQueueManager) poll(queryToken string) (fairQueueResult, error) {
 		}, nil
 	}
 
-	queue := m.hostQueues[sess.Host]
-	if len(queue) == 0 || queue[0] != sess.Token {
-		return fairQueueResult{
-			Result:     "pending",
-			QueryToken: sess.Token,
-			RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
-		}, nil
+	// For IP-limited sessions (guest with IP), we don't require being at the front of the host queue.
+	// Instead, we check if this specific IP can acquire a slot. This allows different IPs to progress
+	// independently even when they share the same "guest" host key.
+	//
+	// For user-limited sessions, we still require being at the front of the host queue to ensure
+	// fair ordering among the same user's requests.
+
+	if !sess.isIPLimited() {
+		// LimitByUser mode: must be at the front of the host queue (FIFO ordering)
+		queue := m.hostQueues[sess.Host]
+		if len(queue) == 0 || queue[0] != sess.Token {
+			return fairQueueResult{
+				Result:     "pending",
+				QueryToken: sess.Token,
+				RetryAfter: int(fqPollInterval(cfg) / time.Millisecond),
+			}, nil
+		}
 	}
+	// LimitByIP mode: skip queue position check - acquire slot if this IP has capacity
+	// if this IP has capacity, regardless of queue position.
 
 	if !m.canAcquireLocked(sess) {
 		return fairQueueResult{
