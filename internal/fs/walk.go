@@ -4,6 +4,7 @@ import (
 	"context"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -51,6 +52,82 @@ func WalkFS(ctx context.Context, depth int, name string, info model.Obj, walkFn 
 		}
 	}
 	return nil
+}
+
+// WalkFSParallel is like WalkFS but processes directories in parallel.
+// It uses bounded parallelism controlled by the concurrency parameter.
+// The walkFn must be safe for concurrent use.
+func WalkFSParallel(ctx context.Context, depth int, name string, info model.Obj, walkFn func(reqPath string, info model.Obj) error, concurrency int) error {
+	walkFnErr := walkFn(name, info)
+	if walkFnErr != nil {
+		if info.IsDir() && walkFnErr == filepath.SkipDir {
+			return nil
+		}
+		return walkFnErr
+	}
+	if !info.IsDir() || depth == 0 {
+		return nil
+	}
+	meta, _ := op.GetNearestMeta(name)
+	objs, err := walkListWithRetry(context.WithValue(ctx, conf.MetaKey, meta), name, &ListArgs{})
+	if err != nil {
+		return walkFnErr
+	}
+
+	// Use a semaphore channel to limit concurrency
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	errChan := make(chan error, 1)
+	done := make(chan struct{})
+
+	for _, fileInfo := range objs {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-errChan:
+			return err
+		default:
+		}
+
+		filename := path.Join(name, fileInfo.GetName())
+
+		// Acquire semaphore
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case sem <- struct{}{}:
+		}
+
+		wg.Add(1)
+		go func(fi model.Obj, fname string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			if err := WalkFSParallel(ctx, depth-1, fname, fi, walkFn, concurrency); err != nil {
+				if err != filepath.SkipDir {
+					select {
+					case errChan <- err:
+					default:
+					}
+				}
+			}
+		}(fileInfo, filename)
+	}
+
+	// Wait for all goroutines to finish
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case err := <-errChan:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func walkListWithRetry(ctx context.Context, name string, args *ListArgs) ([]model.Obj, error) {
