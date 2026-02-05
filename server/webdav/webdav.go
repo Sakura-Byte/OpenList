@@ -273,7 +273,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		link = common.ProxyRange(ctx, link, fi.GetSize())
 	}
 	ip := utils.ClientIP(r)
-	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(user, ip)
+	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(user.Username, user.IsGuest(), ip)
 	if err != nil {
 		if errors.Is(err, errs.ExceedUserRateLimit) || errors.Is(err, errs.ExceedIPRateLimit) {
 			return http.StatusTooManyRequests, err

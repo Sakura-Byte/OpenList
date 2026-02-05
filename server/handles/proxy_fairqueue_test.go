@@ -54,10 +54,10 @@ func setupProxyTest(t *testing.T) {
 func TestProxyFairQueueUserConcurrency429(t *testing.T) {
 	setupProxyTest(t)
 
-	user := &model.User{ID: 10, Role: model.GENERAL}
+	user := &model.User{ID: 10, Role: model.GENERAL, Username: "test_user"}
 	ip := "10.0.0.1"
 
-	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(user, ip)
+	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(user.Username, user.IsGuest(), ip)
 	if err != nil {
 		t.Fatalf("fast acquire: %v", err)
 	}

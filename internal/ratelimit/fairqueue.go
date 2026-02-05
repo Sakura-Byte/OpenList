@@ -147,6 +147,50 @@ type fairQueueManager struct {
 
 var fairQueue = newFairQueueManager()
 
+// userConcurrencyOverrides stores username -> downloadConcurrency for users with custom settings.
+// Only users with non-null DownloadConcurrency are stored here.
+var userConcurrencyOverrides = sync.Map{}
+
+// SetUserConcurrencyOverride updates or removes a user's concurrency override.
+// Call this when a user's DownloadConcurrency setting is created/updated/deleted.
+func SetUserConcurrencyOverride(username string, concurrency *int) {
+	if username == "" {
+		return
+	}
+	if concurrency == nil {
+		userConcurrencyOverrides.Delete(username)
+	} else {
+		userConcurrencyOverrides.Store(username, *concurrency)
+	}
+}
+
+// GetUserConcurrencyOverride returns a user's custom concurrency limit if set.
+func GetUserConcurrencyOverride(username string) (int, bool) {
+	if v, ok := userConcurrencyOverrides.Load(username); ok {
+		return v.(int), true
+	}
+	return 0, false
+}
+
+// LoadUserConcurrencyOverrides preloads all users with custom concurrency settings.
+// Call this during application startup.
+func LoadUserConcurrencyOverrides(overrides map[string]int) {
+	for username, concurrency := range overrides {
+		userConcurrencyOverrides.Store(username, concurrency)
+	}
+}
+
+// userDownloadConcurrencyByName returns the download concurrency limit for a user by username.
+func userDownloadConcurrencyByName(username string, isGuest bool) int {
+	if isGuest {
+		return setting.GetInt(conf.GuestDownloadConcurrency, defaultGuestDownloadConcurrency)
+	}
+	if override, ok := GetUserConcurrencyOverride(username); ok {
+		return override
+	}
+	return setting.GetInt(conf.UserDefaultDownloadConcurrency, defaultUserDownloadConcurrency)
+}
+
 func newFairQueueManager() *fairQueueManager {
 	return &fairQueueManager{
 		sessions:       make(map[string]*fairQueueSession),
@@ -402,12 +446,11 @@ func (m *fairQueueManager) removeSessionLocked(sess *fairQueueSession) {
 }
 
 // Core: acquire
-func (m *fairQueueManager) acquire(user *model.User, ip string) (fairQueueResult, error) {
-	if user == nil {
-		return fairQueueResult{}, errors.New("user required")
+func (m *fairQueueManager) acquire(username string, isGuest bool, ip string) (fairQueueResult, error) {
+	if username == "" && !isGuest {
+		return fairQueueResult{}, errors.New("username required for non-guest")
 	}
 
-	isGuest := user.IsGuest()
 	cfg := fairQueueConfig()
 	m.ensureGC()
 
@@ -426,7 +469,7 @@ func (m *fairQueueManager) acquire(user *model.User, ip string) (fairQueueResult
 	if isGuest {
 		return m.acquireGuestLocked(ip, cfg)
 	}
-	return m.acquireUserLocked(user, cfg)
+	return m.acquireUserLocked(username, cfg)
 }
 
 func (m *fairQueueManager) acquireGuestLocked(ip string, cfg conf.FairQueue) (fairQueueResult, error) {
@@ -480,9 +523,9 @@ func (m *fairQueueManager) acquireGuestLocked(ip string, cfg conf.FairQueue) (fa
 	}, nil
 }
 
-func (m *fairQueueManager) acquireUserLocked(user *model.User, cfg conf.FairQueue) (fairQueueResult, error) {
-	userKey := fmt.Sprintf("u:%d", user.ID)
-	userLimit := userDownloadConcurrency(user)
+func (m *fairQueueManager) acquireUserLocked(username string, cfg conf.FairQueue) (fairQueueResult, error) {
+	userKey := fmt.Sprintf("u:%s", username)
+	userLimit := userDownloadConcurrencyByName(username, false)
 
 	if userLimit <= 0 {
 		return fairQueueResult{Result: "granted"}, nil
@@ -904,12 +947,11 @@ func (m *fairQueueManager) releaseSlotLocked(slot *fairQueueSlot) {
 }
 
 // FastAcquire for sync path (non-polling)
-func (m *fairQueueManager) fastAcquire(user *model.User, ip string) (string, time.Time, error) {
-	if user == nil {
+func (m *fairQueueManager) fastAcquire(username string, isGuest bool, ip string) (string, time.Time, error) {
+	if username == "" && !isGuest {
 		return "", time.Time{}, nil
 	}
 
-	isGuest := user.IsGuest()
 	m.ensureGC()
 
 	m.mu.Lock()
@@ -953,8 +995,8 @@ func (m *fairQueueManager) fastAcquire(user *model.User, ip string) (string, tim
 	}
 
 	// User path
-	userKey := fmt.Sprintf("u:%d", user.ID)
-	userLimit := userDownloadConcurrency(user)
+	userKey := fmt.Sprintf("u:%s", username)
+	userLimit := userDownloadConcurrencyByName(username, false)
 
 	if userLimit <= 0 {
 		return "", time.Time{}, nil
@@ -981,8 +1023,8 @@ func (m *fairQueueManager) fastAcquire(user *model.User, ip string) (string, tim
 }
 
 // Public API
-func FairQueueAcquire(user *model.User, ip string) (fairQueueResult, error) {
-	return fairQueue.acquire(user, ip)
+func FairQueueAcquire(username string, isGuest bool, ip string) (fairQueueResult, error) {
+	return fairQueue.acquire(username, isGuest, ip)
 }
 
 func FairQueuePoll(queryToken string) (fairQueueResult, error) {
@@ -997,6 +1039,6 @@ func FairQueueRelease(slotToken string, hitAt time.Time) error {
 	return fairQueue.release(slotToken, hitAt)
 }
 
-func FairQueueFastAcquire(user *model.User, ip string) (string, time.Time, error) {
-	return fairQueue.fastAcquire(user, ip)
+func FairQueueFastAcquire(username string, isGuest bool, ip string) (string, time.Time, error) {
+	return fairQueue.fastAcquire(username, isGuest, ip)
 }

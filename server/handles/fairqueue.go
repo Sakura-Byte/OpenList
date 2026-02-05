@@ -5,8 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
@@ -33,21 +31,21 @@ type fairQueueReleaseReq struct {
 	HitUpstreamAtMs int64  `json:"hitUpstreamAtMs"`
 }
 
-func resolveFairQueueUser(path, ip string, req fairQueueAcquireReq) (*model.User, error) {
-	if req.Sign != "" {
-		user, err := sign.VerifyDownload(path, ip, strings.TrimSuffix(req.Sign, "/"))
-		if err != nil {
-			return nil, err
-		}
-		if user != nil {
-			return user, nil
-		}
-		return op.GetGuest()
+// resolveFairQueueUserFromSign extracts username and isGuest from a signed token.
+// It avoids DB queries by using the signed payload directly.
+func resolveFairQueueUserFromSign(path, ip, signToken string) (username string, isGuest bool, err error) {
+	if signToken == "" {
+		return "", false, nil
 	}
-	if req.Username != "" {
-		return op.GetUserByName(req.Username)
+	username, err = sign.ExtractUsernameFromDownloadSign(path, ip, strings.TrimSuffix(signToken, "/"))
+	if err != nil {
+		return "", false, err
 	}
-	return nil, nil
+	// Empty username in a valid sign means guest
+	if username == "" {
+		return "", true, nil
+	}
+	return username, false, nil
 }
 
 func FairQueueAcquire(c *gin.Context) {
@@ -60,21 +58,27 @@ func FairQueueAcquire(c *gin.Context) {
 	if ip == "" {
 		ip = c.ClientIP()
 	}
-	user, err := resolveFairQueueUser(req.Path, ip, req)
-	if err != nil {
-		if req.Sign != "" {
+
+	var username string
+	var isGuest bool
+	var err error
+
+	if req.Sign != "" {
+		username, isGuest, err = resolveFairQueueUserFromSign(req.Path, ip, req.Sign)
+		if err != nil {
 			common.ErrorResp(c, err, http.StatusUnauthorized)
-		} else {
-			common.ErrorResp(c, err, http.StatusBadRequest)
+			return
 		}
-		return
-	}
-	if user == nil {
-		common.ErrorStrResp(c, "user required (sign or username)", http.StatusBadRequest)
+	} else if req.Username != "" {
+		// Direct username provided (trusted caller)
+		username = req.Username
+		isGuest = false
+	} else {
+		common.ErrorStrResp(c, "sign or username required", http.StatusBadRequest)
 		return
 	}
 
-	res, err := ratelimit.FairQueueAcquire(user, ip)
+	res, err := ratelimit.FairQueueAcquire(username, isGuest, ip)
 	if err != nil {
 		common.ErrorResp(c, err, http.StatusInternalServerError)
 		return

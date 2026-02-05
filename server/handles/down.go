@@ -120,7 +120,13 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 	}
 	user, _ := c.Request.Context().Value(conf.UserKey).(*model.User)
 	ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
-	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(user, ip)
+	var username string
+	var isGuest bool
+	if user != nil {
+		username = user.Username
+		isGuest = user.IsGuest()
+	}
+	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(username, isGuest, ip)
 	if err != nil {
 		common.ErrorPage(c, err, http.StatusTooManyRequests, true)
 		return
