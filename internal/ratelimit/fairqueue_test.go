@@ -57,10 +57,11 @@ func TestFairQueueGuestIPConcurrency(t *testing.T) {
 		conf.UserDefaultDownloadConcurrency: 2,
 	})
 
+	user := &model.User{ID: 1, Role: model.GUEST}
 	ip := "1.2.3.4"
 
 	// First acquire should be granted directly (fast path) since no one is waiting
-	first, err := FairQueueAcquire("", true, ip)
+	first, err := FairQueueAcquire(user, ip)
 	if err != nil {
 		t.Fatalf("acquire first: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestFairQueueGuestIPConcurrency(t *testing.T) {
 	}
 
 	// Second acquire should be pending since IP limit is 1
-	second, err := FairQueueAcquire("", true, ip)
+	second, err := FairQueueAcquire(user, ip)
 	if err != nil {
 		t.Fatalf("acquire second: %v", err)
 	}
@@ -109,9 +110,10 @@ func TestFairQueueUserConcurrency(t *testing.T) {
 		conf.UserDefaultDownloadConcurrency: 1,
 	})
 
+	user := &model.User{ID: 42, Role: model.GENERAL}
 
 	// First acquire should be granted directly (fast path)
-	first, err := FairQueueAcquire("test_user", false, "")
+	first, err := FairQueueAcquire(user, "")
 	if err != nil {
 		t.Fatalf("acquire first: %v", err)
 	}
@@ -120,7 +122,7 @@ func TestFairQueueUserConcurrency(t *testing.T) {
 	}
 
 	// Second acquire should be pending since user limit is 1
-	second, err := FairQueueAcquire("test_user", false, "")
+	second, err := FairQueueAcquire(user, "")
 	if err != nil {
 		t.Fatalf("acquire second: %v", err)
 	}
@@ -160,10 +162,11 @@ func TestFairQueueFastAcquireFailFast(t *testing.T) {
 		conf.IPDownloadConcurrency:    1,
 	})
 
+	user := &model.User{ID: 7, Role: model.GUEST}
 	ip := "5.6.7.8"
 
 	// First acquire should be granted directly (fast path)
-	first, err := FairQueueAcquire("", true, ip)
+	first, err := FairQueueAcquire(user, ip)
 	if err != nil {
 		t.Fatalf("acquire first: %v", err)
 	}
@@ -172,7 +175,7 @@ func TestFairQueueFastAcquireFailFast(t *testing.T) {
 	}
 
 	// FastAcquire should fail fast since there's already an active slot
-	_, _, err = FairQueueFastAcquire("", true, ip)
+	_, _, err = FairQueueFastAcquire(user, ip)
 	if !errors.Is(err, errs.ExceedUserRateLimit) && !errors.Is(err, errs.ExceedIPRateLimit) {
 		t.Fatalf("expected fail fast rate limit, got: %v", err)
 	}
@@ -193,12 +196,13 @@ func TestFairQueueNewIPFastPathWhileOthersQueued(t *testing.T) {
 		conf.IPDownloadConcurrency:    1,    // Each IP can only have 1 concurrent download
 	})
 
+	guest := &model.User{ID: 1, Role: model.GUEST}
 	ip1 := "10.0.0.1"
 	ip2 := "10.0.0.2"
 	ip3 := "10.0.0.3"
 
 	// IP1 gets the first slot
-	first, err := FairQueueAcquire("", true, ip1)
+	first, err := FairQueueAcquire(guest, ip1)
 	if err != nil {
 		t.Fatalf("acquire first: %v", err)
 	}
@@ -207,7 +211,7 @@ func TestFairQueueNewIPFastPathWhileOthersQueued(t *testing.T) {
 	}
 
 	// IP1 tries to get a second slot, should be pending (IP limit = 1)
-	second, err := FairQueueAcquire("", true, ip1)
+	second, err := FairQueueAcquire(guest, ip1)
 	if err != nil {
 		t.Fatalf("acquire second: %v", err)
 	}
@@ -217,7 +221,7 @@ func TestFairQueueNewIPFastPathWhileOthersQueued(t *testing.T) {
 
 	// Now we have IP1 queued. IP2 (a new IP with no pending or active) should still
 	// get a fast path grant, NOT be blocked by IP1's queue entry.
-	third, err := FairQueueAcquire("", true, ip2)
+	third, err := FairQueueAcquire(guest, ip2)
 	if err != nil {
 		t.Fatalf("acquire third (new IP): %v", err)
 	}
@@ -226,7 +230,7 @@ func TestFairQueueNewIPFastPathWhileOthersQueued(t *testing.T) {
 	}
 
 	// IP3 (another new IP) should also get fast path grant
-	fourth, err := FairQueueAcquire("", true, ip3)
+	fourth, err := FairQueueAcquire(guest, ip3)
 	if err != nil {
 		t.Fatalf("acquire fourth (new IP3): %v", err)
 	}
@@ -259,9 +263,10 @@ func TestFairQueueGuestDualLock(t *testing.T) {
 		conf.IPDownloadConcurrency:    5, // Per-IP limit = 5 (higher than total)
 	})
 
+	guest := &model.User{ID: 1, Role: model.GUEST}
 
 	// IP1 gets slot 1 (guestTotal=1)
-	r1, err := FairQueueAcquire("", true, "1.1.1.1")
+	r1, err := FairQueueAcquire(guest, "1.1.1.1")
 	if err != nil {
 		t.Fatalf("acquire r1: %v", err)
 	}
@@ -270,7 +275,7 @@ func TestFairQueueGuestDualLock(t *testing.T) {
 	}
 
 	// IP2 gets slot 2 (guestTotal=2, now at limit)
-	r2, err := FairQueueAcquire("", true, "2.2.2.2")
+	r2, err := FairQueueAcquire(guest, "2.2.2.2")
 	if err != nil {
 		t.Fatalf("acquire r2: %v", err)
 	}
@@ -279,7 +284,7 @@ func TestFairQueueGuestDualLock(t *testing.T) {
 	}
 
 	// IP3 should be PENDING (guest total limit reached, even though IP3 has 0 active)
-	r3, err := FairQueueAcquire("", true, "3.3.3.3")
+	r3, err := FairQueueAcquire(guest, "3.3.3.3")
 	if err != nil {
 		t.Fatalf("acquire r3: %v", err)
 	}

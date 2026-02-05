@@ -9,8 +9,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/cmd/flags"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
-	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	log "github.com/sirupsen/logrus"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -88,15 +86,4 @@ func InitDB() {
 		log.Fatalf("failed to connect database:%s", err.Error())
 	}
 	db.Init(dB)
-
-	// Register FairQueue user concurrency sync hook
-	op.OnUserConcurrencyChange = ratelimit.SetUserConcurrencyOverride
-
-	// Preload user concurrency overrides from DB
-	if overrides, err := db.GetUserConcurrencyOverrides(); err == nil {
-		ratelimit.LoadUserConcurrencyOverrides(overrides)
-		log.Infof("loaded %d user concurrency overrides", len(overrides))
-	} else {
-		log.Warnf("failed to load user concurrency overrides: %v", err)
-	}
 }

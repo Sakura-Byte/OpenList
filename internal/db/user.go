@@ -64,22 +64,6 @@ func DeleteUserById(id uint) error {
 	return errors.WithStack(db.Delete(&model.User{}, id).Error)
 }
 
-// GetUserConcurrencyOverrides returns a map of username -> download concurrency
-// for all users that have a custom concurrency setting (DownloadConcurrency is not null).
-func GetUserConcurrencyOverrides() (map[string]int, error) {
-	var users []model.User
-	if err := db.Where("download_concurrency IS NOT NULL").Find(&users).Error; err != nil {
-		return nil, errors.Wrapf(err, "failed to get users with concurrency overrides")
-	}
-	result := make(map[string]int, len(users))
-	for _, u := range users {
-		if u.DownloadConcurrency != nil {
-			result[u.Username] = *u.DownloadConcurrency
-		}
-	}
-	return result, nil
-}
-
 func UpdateAuthn(userID uint, authn string) error {
 	return db.Model(&model.User{ID: userID}).Update("authn", authn).Error
 }

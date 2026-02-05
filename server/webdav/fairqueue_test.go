@@ -73,7 +73,7 @@ func TestWebDAVFairQueueGuestIP429(t *testing.T) {
 	user := setupWebdavTest(t, root)
 	ip := "1.2.3.4"
 
-	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(user.Username, user.IsGuest(), ip)
+	slotToken, hitAt, err := ratelimit.FairQueueFastAcquire(user, ip)
 	if err != nil {
 		t.Fatalf("fast acquire: %v", err)
 	}

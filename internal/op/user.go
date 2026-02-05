@@ -13,12 +13,7 @@ var userG singleflight.Group[*model.User]
 var guestUser *model.User
 var adminUser *model.User
 
-// OnUserConcurrencyChange is a hook called when a user's concurrency setting changes.
-// Set this from bootstrap to sync with ratelimit.SetUserConcurrencyOverride.
-var OnUserConcurrencyChange func(username string, concurrency *int)
-
 func GetAdmin() (*model.User, error) {
-
 	if adminUser == nil {
 		user, err := db.GetUserByRole(model.ADMIN)
 		if err != nil {
@@ -72,12 +67,7 @@ func GetUsers(pageIndex, pageSize int) (users []model.User, count int64, err err
 
 func CreateUser(u *model.User) error {
 	u.BasePath = utils.FixAndCleanPath(u.BasePath)
-	err := db.CreateUser(u)
-	if err == nil && OnUserConcurrencyChange != nil {
-		// Sync concurrency override to FairQueue cache
-		OnUserConcurrencyChange(u.Username, u.DownloadConcurrency)
-	}
-	return err
+	return db.CreateUser(u)
 }
 
 func DeleteUserById(id uint) error {
@@ -89,10 +79,6 @@ func DeleteUserById(id uint) error {
 		return errs.DeleteAdminOrGuest
 	}
 	Cache.DeleteUser(old.Username)
-	// Clear concurrency override from FairQueue cache
-	if OnUserConcurrencyChange != nil {
-		OnUserConcurrencyChange(old.Username, nil)
-	}
 	if err := DeleteSharingsByCreatorId(id); err != nil {
 		return errors.WithMessage(err, "failed to delete user's sharings")
 	}
@@ -112,16 +98,7 @@ func UpdateUser(u *model.User) error {
 	}
 	Cache.DeleteUser(old.Username)
 	u.BasePath = utils.FixAndCleanPath(u.BasePath)
-	err = db.UpdateUser(u)
-	if err == nil && OnUserConcurrencyChange != nil {
-		// Sync concurrency override to FairQueue cache
-		OnUserConcurrencyChange(u.Username, u.DownloadConcurrency)
-		// If username changed, also clear old username from cache
-		if old.Username != u.Username {
-			OnUserConcurrencyChange(old.Username, nil)
-		}
-	}
-	return err
+	return db.UpdateUser(u)
 }
 
 func Cancel2FAByUser(u *model.User) error {
