@@ -90,6 +90,7 @@ type fairQueueSlot struct {
 	IsGuest    bool
 	AcquiredAt time.Time
 	Releasing  bool
+	Path       string // File path for preemption tracking
 }
 
 type smoothHostReleaser struct {
@@ -137,6 +138,10 @@ type fairQueueManager struct {
 	// Slot management
 	activeSlots map[string]*fairQueueSlot
 
+	// Path-based preemption: (hostKey, path) → ordered list of slotTokens (oldest first)
+	// hostKey is "u:<id>" for users or "ip:<addr>" for guests
+	pathSlots map[string][]string
+
 	// Rate smoothing for releases
 	smoothReleaser map[string]*smoothHostReleaser
 
@@ -156,6 +161,7 @@ func newFairQueueManager() *fairQueueManager {
 		userQueues:     make(map[string][]string),
 		userActive:     make(map[string]int),
 		activeSlots:    make(map[string]*fairQueueSlot),
+		pathSlots:      make(map[string][]string),
 		smoothReleaser: make(map[string]*smoothHostReleaser),
 	}
 }
@@ -402,7 +408,7 @@ func (m *fairQueueManager) removeSessionLocked(sess *fairQueueSession) {
 }
 
 // Core: acquire
-func (m *fairQueueManager) acquire(user *model.User, ip string) (fairQueueResult, error) {
+func (m *fairQueueManager) acquire(user *model.User, ip, path string) (fairQueueResult, error) {
 	if user == nil {
 		return fairQueueResult{}, errors.New("user required")
 	}
@@ -424,12 +430,12 @@ func (m *fairQueueManager) acquire(user *model.User, ip string) (fairQueueResult
 	}
 
 	if isGuest {
-		return m.acquireGuestLocked(ip, cfg)
+		return m.acquireGuestLocked(ip, path, cfg)
 	}
-	return m.acquireUserLocked(user, cfg)
+	return m.acquireUserLocked(user, path, cfg)
 }
 
-func (m *fairQueueManager) acquireGuestLocked(ip string, cfg conf.FairQueue) (fairQueueResult, error) {
+func (m *fairQueueManager) acquireGuestLocked(ip, path string, cfg conf.FairQueue) (fairQueueResult, error) {
 	if ip == "" {
 		return fairQueueResult{}, errors.New("guest requires IP")
 	}
@@ -453,7 +459,20 @@ func (m *fairQueueManager) acquireGuestLocked(ip string, cfg conf.FairQueue) (fa
 		ipOK := ipLimit <= 0 || m.ipActive[ip] < ipLimit
 		guestOK := guestLimit <= 0 || m.guestTotalActive < guestLimit
 		if ipOK && guestOK {
-			return m.grantGuestSlotLocked(ip, ipLimit)
+			return m.grantGuestSlotLocked(ip, path, ipLimit)
+		}
+	}
+
+	// Path-based preemption: if at limit and path is specified, preempt oldest slot for this path
+	if path != "" && ipLimit > 0 && m.ipActive[ip] >= ipLimit {
+		hostKey := "ip:" + ip
+		// First try: preempt oldest slot for the SAME path (seek case)
+		if preempted := m.preemptOldestPathSlotLocked(hostKey, path); preempted {
+			return m.grantGuestSlotLocked(ip, path, ipLimit)
+		}
+		// Second try: preempt any path with excess slots (new path case)
+		if preempted := m.preemptAnyExcessPathSlotLocked(hostKey); preempted {
+			return m.grantGuestSlotLocked(ip, path, ipLimit)
 		}
 	}
 
@@ -480,7 +499,7 @@ func (m *fairQueueManager) acquireGuestLocked(ip string, cfg conf.FairQueue) (fa
 	}, nil
 }
 
-func (m *fairQueueManager) acquireUserLocked(user *model.User, cfg conf.FairQueue) (fairQueueResult, error) {
+func (m *fairQueueManager) acquireUserLocked(user *model.User, path string, cfg conf.FairQueue) (fairQueueResult, error) {
 	userKey := fmt.Sprintf("u:%d", user.ID)
 	userLimit := userDownloadConcurrency(user)
 
@@ -499,7 +518,19 @@ func (m *fairQueueManager) acquireUserLocked(user *model.User, cfg conf.FairQueu
 
 	// Fast path
 	if len(m.userQueues[userKey]) == 0 && m.userActive[userKey] < userLimit {
-		return m.grantUserSlotLocked(userKey, userLimit)
+		return m.grantUserSlotLocked(userKey, path, userLimit)
+	}
+
+	// Path-based preemption: if at limit and path is specified
+	if path != "" && m.userActive[userKey] >= userLimit {
+		// First try: preempt oldest slot for the SAME path (seek case)
+		if preempted := m.preemptOldestPathSlotLocked(userKey, path); preempted {
+			return m.grantUserSlotLocked(userKey, path, userLimit)
+		}
+		// Second try: preempt any path with excess slots (new path case)
+		if preempted := m.preemptAnyExcessPathSlotLocked(userKey); preempted {
+			return m.grantUserSlotLocked(userKey, path, userLimit)
+		}
 	}
 
 	// Slow path
@@ -524,7 +555,7 @@ func (m *fairQueueManager) acquireUserLocked(user *model.User, cfg conf.FairQueu
 	}, nil
 }
 
-func (m *fairQueueManager) grantGuestSlotLocked(ip string, ipLimit int) (fairQueueResult, error) {
+func (m *fairQueueManager) grantGuestSlotLocked(ip, path string, ipLimit int) (fairQueueResult, error) {
 	slotToken := random.String(16)
 	now := time.Now()
 	slot := &fairQueueSlot{
@@ -532,6 +563,7 @@ func (m *fairQueueManager) grantGuestSlotLocked(ip string, ipLimit int) (fairQue
 		IP:         ip,
 		IsGuest:    true,
 		AcquiredAt: now,
+		Path:       path,
 	}
 	m.activeSlots[slotToken] = slot
 	if ipLimit > 0 {
@@ -539,13 +571,20 @@ func (m *fairQueueManager) grantGuestSlotLocked(ip string, ipLimit int) (fairQue
 	}
 	m.guestTotalActive++
 
+	// Track in pathSlots for preemption
+	if path != "" {
+		hostKey := "ip:" + ip
+		pathKey := hostKey + ":" + path
+		m.pathSlots[pathKey] = append(m.pathSlots[pathKey], slotToken)
+	}
+
 	return fairQueueResult{
 		Result:    "granted",
 		SlotToken: slotToken,
 	}, nil
 }
 
-func (m *fairQueueManager) grantUserSlotLocked(userKey string, userLimit int) (fairQueueResult, error) {
+func (m *fairQueueManager) grantUserSlotLocked(userKey, path string, userLimit int) (fairQueueResult, error) {
 	slotToken := random.String(16)
 	now := time.Now()
 	slot := &fairQueueSlot{
@@ -553,16 +592,76 @@ func (m *fairQueueManager) grantUserSlotLocked(userKey string, userLimit int) (f
 		UserKey:    userKey,
 		IsGuest:    false,
 		AcquiredAt: now,
+		Path:       path,
 	}
 	m.activeSlots[slotToken] = slot
 	if userLimit > 0 {
 		m.userActive[userKey]++
 	}
 
+	// Track in pathSlots for preemption
+	if path != "" {
+		pathKey := userKey + ":" + path
+		m.pathSlots[pathKey] = append(m.pathSlots[pathKey], slotToken)
+	}
+
 	return fairQueueResult{
 		Result:    "granted",
 		SlotToken: slotToken,
 	}, nil
+}
+
+// preemptOldestPathSlotLocked releases the oldest slot for the same (hostKey, path).
+// Returns true if a slot was preempted.
+func (m *fairQueueManager) preemptOldestPathSlotLocked(hostKey, path string) bool {
+	pathKey := hostKey + ":" + path
+	slots := m.pathSlots[pathKey]
+	if len(slots) == 0 {
+		return false
+	}
+
+	// Release the oldest slot (first in list)
+	oldestToken := slots[0]
+	slot := m.activeSlots[oldestToken]
+	if slot == nil || slot.Releasing {
+		// Clean up stale reference
+		m.pathSlots[pathKey] = slots[1:]
+		if len(m.pathSlots[pathKey]) == 0 {
+			delete(m.pathSlots, pathKey)
+		}
+		return false
+	}
+
+	// Release the slot immediately (no delay)
+	m.releaseSlotLocked(slot)
+	return true
+}
+
+// preemptAnyExcessPathSlotLocked finds any path with more than 1 slot and releases the oldest.
+// This is used when a new path request comes in but we're at capacity.
+// Returns true if a slot was preempted.
+func (m *fairQueueManager) preemptAnyExcessPathSlotLocked(hostKey string) bool {
+	prefix := hostKey + ":"
+	for pathKey, slots := range m.pathSlots {
+		if len(pathKey) <= len(prefix) || pathKey[:len(prefix)] != prefix {
+			continue
+		}
+		if len(slots) > 1 {
+			// This path has multiple slots, preempt the oldest
+			oldestToken := slots[0]
+			slot := m.activeSlots[oldestToken]
+			if slot != nil && !slot.Releasing {
+				m.releaseSlotLocked(slot)
+				return true
+			}
+			// Clean up stale reference
+			m.pathSlots[pathKey] = slots[1:]
+			if len(m.pathSlots[pathKey]) == 0 {
+				delete(m.pathSlots, pathKey)
+			}
+		}
+	}
+	return false
 }
 
 // Core: poll
@@ -871,6 +970,29 @@ func (m *fairQueueManager) releaseSlotLocked(slot *fairQueueSlot) {
 		return
 	}
 
+	// Clean up pathSlots tracking
+	if slot.Path != "" {
+		var hostKey string
+		if slot.IsGuest {
+			hostKey = "ip:" + slot.IP
+		} else {
+			hostKey = slot.UserKey
+		}
+		pathKey := hostKey + ":" + slot.Path
+		slots := m.pathSlots[pathKey]
+		out := slots[:0]
+		for _, t := range slots {
+			if t != slot.Token {
+				out = append(out, t)
+			}
+		}
+		if len(out) == 0 {
+			delete(m.pathSlots, pathKey)
+		} else {
+			m.pathSlots[pathKey] = out
+		}
+	}
+
 	if slot.IsGuest {
 		if slot.IP != "" {
 			if v := m.ipActive[slot.IP]; v > 1 {
@@ -981,8 +1103,8 @@ func (m *fairQueueManager) fastAcquire(user *model.User, ip string) (string, tim
 }
 
 // Public API
-func FairQueueAcquire(user *model.User, ip string) (fairQueueResult, error) {
-	return fairQueue.acquire(user, ip)
+func FairQueueAcquire(user *model.User, ip, path string) (fairQueueResult, error) {
+	return fairQueue.acquire(user, ip, path)
 }
 
 func FairQueuePoll(queryToken string) (fairQueueResult, error) {

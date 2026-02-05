@@ -74,7 +74,7 @@ func FairQueueAcquire(c *gin.Context) {
 		return
 	}
 
-	res, err := ratelimit.FairQueueAcquire(user, ip)
+	res, err := ratelimit.FairQueueAcquire(user, ip, req.Path)
 	if err != nil {
 		common.ErrorResp(c, err, http.StatusInternalServerError)
 		return
