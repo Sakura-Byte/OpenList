@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -97,29 +98,19 @@ func recursivelyListVirtual(ctx context.Context, rawPath string, limit rate.Limi
 }
 
 func RecursivelyListStorage(ctx context.Context, storage driver.Driver, actualPath string, limiter *rate.Limiter, counter *atomic.Uint64) {
-	objs, err := List(ctx, storage, actualPath, model.ListArgs{Refresh: true})
-	if err != nil {
-		if !errors.Is(err, context.Canceled) {
-			log.Errorf("error recursively list: failed list (%s)[%s]: %v", storage.GetStorage().MountPath, actualPath, err)
-		}
-		return
-	}
-	if counter != nil {
-		counter.Add(uint64(len(objs)))
-	}
-	for _, obj := range objs {
-		if utils.IsCanceled(ctx) {
-			return
-		}
-		if !obj.IsDir() {
-			continue
-		}
-		if limiter != nil {
-			if err = limiter.Wait(ctx); err != nil {
-				return
+	err := WalkStorageRecursive(ctx, storage, actualPath, -1, model.ListArgs{Refresh: true},
+		needEnableListRForIndexScan(), limiter, func(_ string, objs []model.Obj) error {
+			if counter != nil {
+				counter.Add(uint64(len(objs)))
 			}
-		}
-		nextPath := stdpath.Join(actualPath, obj.GetName())
-		RecursivelyListStorage(ctx, storage, nextPath, limiter, counter)
+			return nil
+		})
+	if err != nil && !errors.Is(err, context.Canceled) {
+		log.Errorf("error recursively list: failed list (%s)[%s]: %v", storage.GetStorage().MountPath, actualPath, err)
 	}
+}
+
+func needEnableListRForIndexScan() bool {
+	item, _ := GetSettingItemByKey(conf.EnableListRForIndexScan)
+	return item != nil && (item.Value == "true" || item.Value == "1")
 }

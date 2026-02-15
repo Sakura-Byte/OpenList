@@ -38,6 +38,14 @@ type Reader interface {
 	Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error)
 }
 
+type ListRCallback func(parent string, entries []model.Obj) error
+
+type ListRer interface {
+	// ListR recursively lists entries starting from dir.
+	// parent is the actual parent path of the current entries batch.
+	ListR(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback ListRCallback) error
+}
+
 type GetRooter interface {
 	GetRoot(ctx context.Context) (model.Obj, error)
 }

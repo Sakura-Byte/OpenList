@@ -101,6 +101,12 @@ type IndexWalkRetry struct {
 	MaxBackoffMs int `json:"max_backoff_ms" env:"MAX_BACKOFF_MS"`
 }
 
+type IndexListR struct {
+	Checkers            int `json:"checkers" env:"CHECKERS"`
+	RequestMaxAttempts  int `json:"request_max_attempts" env:"REQUEST_MAX_ATTEMPTS"`
+	RequestRetryDelayMs int `json:"request_retry_delay_ms" env:"REQUEST_RETRY_DELAY_MS"`
+}
+
 type S3 struct {
 	Enable bool `json:"enable" env:"ENABLE"`
 	Port   int  `json:"port" env:"PORT"`
@@ -151,6 +157,7 @@ type Config struct {
 	FTP                   FTP            `json:"ftp" envPrefix:"FTP_"`
 	SFTP                  SFTP           `json:"sftp" envPrefix:"SFTP_"`
 	IndexWalkRetry        IndexWalkRetry `json:"index_walk_retry" envPrefix:"INDEX_WALK_RETRY_"`
+	IndexListR            IndexListR     `json:"index_listr" envPrefix:"INDEX_LISTR_"`
 	LastLaunchedVersion   string         `json:"last_launched_version"`
 	ProxyAddress          string         `json:"proxy_address" env:"PROXY_ADDRESS"`
 }
@@ -281,6 +288,11 @@ func DefaultConfig(dataDir string) *Config {
 			MaxAttempts:  10,
 			DelayMs:      200,
 			MaxBackoffMs: 5000,
+		},
+		IndexListR: IndexListR{
+			Checkers:            8,
+			RequestMaxAttempts:  3,
+			RequestRetryDelayMs: 300,
 		},
 		LastLaunchedVersion: "",
 		ProxyAddress:        "",

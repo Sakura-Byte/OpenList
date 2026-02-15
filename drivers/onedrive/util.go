@@ -7,9 +7,12 @@ import (
 	"io"
 	"net/http"
 	stdpath "path"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -19,6 +22,7 @@ import (
 	"github.com/avast/retry-go"
 	"github.com/go-resty/resty/v2"
 	jsoniter "github.com/json-iterator/go"
+	log "github.com/sirupsen/logrus"
 )
 
 var onedriveHostMap = map[string]Host{
@@ -177,6 +181,291 @@ func (d *Onedrive) getFiles(path string) ([]File, error) {
 		nextLink = files.NextLink
 	}
 	return res, nil
+}
+
+func onedriveListRRequestAttempts() int {
+	if conf.Conf != nil && conf.Conf.IndexListR.RequestMaxAttempts > 0 {
+		return conf.Conf.IndexListR.RequestMaxAttempts
+	}
+	return 3
+}
+
+func onedriveListRRetryDelay() time.Duration {
+	if conf.Conf != nil && conf.Conf.IndexListR.RequestRetryDelayMs > 0 {
+		return time.Duration(conf.Conf.IndexListR.RequestRetryDelayMs) * time.Millisecond
+	}
+	return 300 * time.Millisecond
+}
+
+func (d *Onedrive) requestDeltaPageWithRetry(ctx context.Context, nextLink string) (Files, error) {
+	attempts := onedriveListRRequestAttempts()
+	retryDelay := onedriveListRRetryDelay()
+	var (
+		files   Files
+		lastErr error
+	)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if utils.IsCanceled(ctx) {
+			return Files{}, ctx.Err()
+		}
+		files = Files{}
+		_, err := d.Request(nextLink, http.MethodGet, nil, &files)
+		if err == nil {
+			return files, nil
+		}
+		lastErr = err
+		if attempt == attempts {
+			break
+		}
+		log.Warnf("onedrive ListR delta request failed, retrying (%d/%d), err=%v",
+			attempt, attempts, err)
+		backoff := time.Duration(attempt) * retryDelay
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return Files{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return Files{}, lastErr
+}
+
+func (d *Onedrive) ListR(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback driver.ListRCallback) error {
+	_ = args
+	if maxDepth == 0 {
+		return nil
+	}
+	startPath := utils.FixAndCleanPath(dir.GetPath())
+	if startPath == "" {
+		startPath = "/"
+	}
+	directoryID := dir.GetID()
+	if directoryID == "" {
+		root, err := d.GetFile(startPath)
+		if err != nil {
+			return err
+		}
+		directoryID = root.Id
+	}
+	if directoryID == "" {
+		return fmt.Errorf("onedrive ListR: empty directory id")
+	}
+
+	nextLink := d.GetMetaUrl(false, "/") + "/delta?$top=1000&$expand=thumbnails($select=medium)&$select=id,name,size,fileSystemInfo,content.downloadUrl,file,parentReference,deleted,remoteItem"
+	items := make([]File, 0)
+	for nextLink != "" {
+		if utils.IsCanceled(ctx) {
+			return ctx.Err()
+		}
+		files, err := d.requestDeltaPageWithRetry(ctx, nextLink)
+		if err != nil {
+			return err
+		}
+		items = append(items, files.Value...)
+		nextLink = files.NextLink
+	}
+
+	entriesByParent, sharedDirs := resolveOnedriveListRItems(startPath, directoryID, items, maxDepth)
+	if startPath != "/" && len(entriesByParent) == 0 {
+		return d.listRByList(ctx, dir, maxDepth, callback)
+	}
+
+	if callback == nil {
+		return nil
+	}
+	parentPaths := make([]string, 0, len(entriesByParent))
+	for parentPath := range entriesByParent {
+		parentPaths = append(parentPaths, parentPath)
+	}
+	sort.Strings(parentPaths)
+	for i := range parentPaths {
+		if err := callback(parentPaths[i], entriesByParent[parentPaths[i]]); err != nil {
+			return err
+		}
+	}
+	for i := range sharedDirs {
+		remainingDepth := -1
+		if maxDepth >= 0 {
+			depth := listRPathDepth(startPath, sharedDirs[i].GetPath())
+			remainingDepth = maxDepth - depth
+			if remainingDepth <= 0 {
+				continue
+			}
+		}
+		if err := d.listRByList(ctx, sharedDirs[i], remainingDepth, callback); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *Onedrive) listRByList(ctx context.Context, dir model.Obj, maxDepth int, callback driver.ListRCallback) error {
+	type task struct {
+		obj   model.Obj
+		depth int
+	}
+	queue := []task{{obj: dir, depth: 0}}
+	for len(queue) > 0 {
+		if utils.IsCanceled(ctx) {
+			return ctx.Err()
+		}
+		current := queue[0]
+		queue = queue[1:]
+		parentPath := utils.FixAndCleanPath(current.obj.GetPath())
+		if parentPath == "" {
+			parentPath = "/"
+		}
+		objs, err := d.List(ctx, current.obj, model.ListArgs{})
+		if err != nil {
+			return err
+		}
+		for i := range objs {
+			raw := model.UnwrapObj(objs[i])
+			if raw.GetPath() != "" {
+				continue
+			}
+			if setter, ok := raw.(model.SetPath); ok {
+				setter.SetPath(stdpath.Join(parentPath, raw.GetName()))
+			}
+		}
+		if callback != nil && len(objs) > 0 {
+			if err := callback(parentPath, objs); err != nil {
+				return err
+			}
+		}
+		nextDepth := current.depth + 1
+		if maxDepth >= 0 && nextDepth >= maxDepth {
+			continue
+		}
+		for i := range objs {
+			if objs[i].IsDir() {
+				queue = append(queue, task{obj: objs[i], depth: nextDepth})
+			}
+		}
+	}
+	return nil
+}
+
+func listRPathDepth(basePath, fullPath string) int {
+	relPath := utils.RelativePath(basePath, fullPath)
+	if relPath == "" {
+		return 0
+	}
+	return strings.Count(relPath, "/") + 1
+}
+
+func resolveOnedriveListRItems(startPath, directoryID string, items []File, maxDepth int) (map[string][]model.Obj, []model.Obj) {
+	entriesByParent := make(map[string][]model.Obj)
+	handledItemIDs := make(map[string]struct{})
+	items = compactOnedriveDeltaItemsFirstSeen(items)
+	sharedDirs := make([]model.Obj, 0)
+	seenSharedDirIDs := make(map[string]struct{})
+	idToPath := map[string]string{
+		directoryID: startPath,
+	}
+	unresolved := append([]File(nil), items...)
+
+	for len(unresolved) > 0 {
+		progressed := false
+		nextUnresolved := make([]File, 0)
+		for i := range unresolved {
+			item := unresolved[i]
+			if item.Id == "" {
+				continue
+			}
+			if item.Id == directoryID {
+				continue
+			}
+			if _, ok := handledItemIDs[item.Id]; ok {
+				continue
+			}
+			if item.Deleted != nil {
+				handledItemIDs[item.Id] = struct{}{}
+				continue
+			}
+			parentPath, ok := idToPath[item.ParentReference.Id]
+			if !ok {
+				if parsedPath, parsed := parseOnedriveParentPath(item.ParentReference.Path); parsed &&
+					isWithinOnedriveListRSubtree(startPath, parsedPath) {
+					parentPath = parsedPath
+					idToPath[item.ParentReference.Id] = parsedPath
+					ok = true
+				}
+			}
+			if !ok {
+				nextUnresolved = append(nextUnresolved, item)
+				continue
+			}
+
+			fullPath := stdpath.Join(parentPath, item.Name)
+			depth := listRPathDepth(startPath, fullPath)
+			if maxDepth >= 0 && depth > maxDepth {
+				handledItemIDs[item.Id] = struct{}{}
+				continue
+			}
+
+			obj := fileToObj(item, item.ParentReference.Id)
+			obj.Path = fullPath
+			entriesByParent[parentPath] = append(entriesByParent[parentPath], obj)
+			handledItemIDs[item.Id] = struct{}{}
+			if item.RemoteItem != nil && item.RemoteItem.Folder != nil && obj.IsDir() {
+				if _, seen := seenSharedDirIDs[obj.GetID()]; !seen {
+					seenSharedDirIDs[obj.GetID()] = struct{}{}
+					sharedDirs = append(sharedDirs, obj)
+				}
+			}
+
+			if obj.IsDir() && (maxDepth < 0 || depth < maxDepth) {
+				idToPath[item.Id] = fullPath
+			}
+			progressed = true
+		}
+		if !progressed {
+			break
+		}
+		unresolved = nextUnresolved
+	}
+	return entriesByParent, sharedDirs
+}
+
+func compactOnedriveDeltaItemsFirstSeen(items []File) []File {
+	compacted := make([]File, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for i := range items {
+		if items[i].Id == "" {
+			continue
+		}
+		if _, ok := seen[items[i].Id]; !ok {
+			seen[items[i].Id] = struct{}{}
+			compacted = append(compacted, items[i])
+		}
+	}
+	return compacted
+}
+
+func parseOnedriveParentPath(parentPath string) (string, bool) {
+	parentPath = strings.TrimSpace(parentPath)
+	if parentPath == "" {
+		return "", false
+	}
+	if strings.HasSuffix(parentPath, "/root") {
+		return "/", true
+	}
+	idx := strings.Index(parentPath, ":/")
+	if idx < 0 {
+		return "", false
+	}
+	return utils.FixAndCleanPath(parentPath[idx+1:]), true
+}
+
+func isWithinOnedriveListRSubtree(rootPath, path string) bool {
+	rootPath = utils.FixAndCleanPath(rootPath)
+	path = utils.FixAndCleanPath(path)
+	if rootPath == "/" {
+		return true
+	}
+	return path == rootPath || strings.HasPrefix(path, utils.PathAddSeparatorSuffix(rootPath))
 }
 
 func (d *Onedrive) GetFile(path string) (*File, error) {

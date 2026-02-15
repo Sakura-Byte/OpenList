@@ -23,6 +23,7 @@ type File struct {
 	Id              string    `json:"id"`
 	Name            string    `json:"name"`
 	MimeType        string    `json:"mimeType"`
+	Parents         []string  `json:"parents"`
 	ModifiedTime    time.Time `json:"modifiedTime"`
 	CreatedTime     time.Time `json:"createdTime"`
 	Size            string    `json:"size"`

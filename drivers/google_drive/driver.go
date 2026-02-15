@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -20,6 +21,9 @@ type GoogleDrive struct {
 	AccessToken            string
 	ServiceAccountFile     int
 	ServiceAccountFileList []string
+	listRMu                sync.Mutex
+	listRGrouping          int
+	listREmpties           map[string]struct{}
 }
 
 func (d *GoogleDrive) Config() driver.Config {

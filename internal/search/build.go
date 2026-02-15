@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -36,6 +37,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 		objCount uint64 = 0
 		fi       model.Obj
 	)
+	useListR := setting.GetBool(conf.EnableListRForIndexScan)
 	log.Infof("build index for: %+v", indexPaths)
 	log.Infof("ignore paths: %+v", ignorePaths)
 	quit := make(chan struct{}, 1)
@@ -141,6 +143,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 	if err != nil {
 		return err
 	}
+	walkCtx := context.WithValue(ctx, conf.UserKey, admin)
 	if count {
 		WriteProgress(&model.IndexProgress{
 			ObjCount: 0,
@@ -148,6 +151,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 		})
 	}
 	for _, indexPath := range indexPaths {
+		currentRootPath := utils.FixAndCleanPath(indexPath)
 		walkFn := func(indexPath string, info model.Obj) error {
 			if !running.Load() {
 				return filepath.SkipDir
@@ -172,18 +176,84 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 					Parent: path.Dir(indexPath),
 				},
 			})
-			return nil
+
+			if !useListR || !info.IsDir() {
+				return nil
+			}
+			storage, actualPath, err := op.GetStorageAndActualPath(indexPath)
+			if err != nil {
+				return nil
+			}
+			if _, ok := storage.(driver.ListRer); !ok {
+				return nil
+			}
+			// Keep default WalkFS traversal when the current path has virtual storage children.
+			// This avoids skipping nested mount points.
+			if len(op.GetStorageVirtualFilesByPath(indexPath)) > 0 {
+				return nil
+			}
+			remainingDepth := maxDepth
+			if maxDepth >= 0 {
+				remainingDepth = maxDepth - pathDepthDiff(currentRootPath, indexPath)
+				if remainingDepth < 0 {
+					remainingDepth = 0
+				}
+			}
+			err = op.WalkStorageRecursive(walkCtx, storage, actualPath, remainingDepth, model.ListArgs{},
+				true, nil, func(parent string, objs []model.Obj) error {
+					if !running.Load() {
+						return context.Canceled
+					}
+					parentPath := utils.GetFullPath(storage.GetStorage().MountPath, parent)
+					for i := range objs {
+						fullPath := path.Join(parentPath, objs[i].GetName())
+						skip := false
+						for _, avoidPath := range ignorePaths {
+							if strings.HasPrefix(fullPath, avoidPath) {
+								skip = true
+								break
+							}
+						}
+						if skip {
+							continue
+						}
+						indexMQ.Publish(mq.Message[ObjWithParent]{
+							Content: ObjWithParent{
+								Obj:    objs[i],
+								Parent: parentPath,
+							},
+						})
+					}
+					return nil
+				})
+			if err != nil {
+				return err
+			}
+			return filepath.SkipDir
 		}
 		fi, err = fs.Get(ctx, indexPath, &fs.GetArgs{})
 		if err != nil {
 			return err
 		}
-		err = fs.WalkFSParallel(context.WithValue(ctx, conf.UserKey, admin), maxDepth, indexPath, fi, walkFn, conf.Conf.MaxConcurrency)
+		err = fs.WalkFSParallel(walkCtx, maxDepth, indexPath, fi, walkFn, conf.Conf.MaxConcurrency)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func pathDepthDiff(base, target string) int {
+	base = utils.FixAndCleanPath(base)
+	target = utils.FixAndCleanPath(target)
+	if base == target {
+		return 0
+	}
+	rel := strings.TrimPrefix(target, utils.PathAddSeparatorSuffix(base))
+	if rel == target || rel == "" {
+		return 0
+	}
+	return strings.Count(rel, "/") + 1
 }
 
 func Del(ctx context.Context, prefix string) error {

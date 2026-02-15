@@ -8,8 +8,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	stdpath "path"
 	"regexp"
+	"sort"
 	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -17,6 +22,7 @@ import (
 	"github.com/avast/retry-go"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -30,9 +36,19 @@ import (
 // Google Drive API field constants
 const (
 	// File list query fields
-	FilesListFields = "files(id,name,mimeType,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken"
+	FilesListFields = "files(id,name,mimeType,parents,size,modifiedTime,createdTime,thumbnailLink,shortcutDetails,md5Checksum,sha1Checksum,sha256Checksum),nextPageToken"
 	// Single file query fields
 	FileInfoFields = "id,name,mimeType,size,md5Checksum,sha1Checksum,sha256Checksum"
+	// Number of parent IDs queried in one ListR batch.
+	listRGrouping = 50
+	// Default number of concurrent workers for GoogleDrive ListR.
+	defaultListRCheckers = 8
+	// Input queue size for GoogleDrive ListR workers.
+	listRInputBuffer = 1000
+	// Default max attempts for a single ListR listing request.
+	defaultListRRequestAttempts = 3
+	// Default retry delay for a single ListR listing request.
+	defaultListRRequestRetryDelayMs = 300
 )
 
 type googleDriveServiceAccount struct {
@@ -230,74 +246,457 @@ func (d *GoogleDrive) request(url string, method string, callback base.ReqCallba
 }
 
 func (d *GoogleDrive) getFiles(id string) ([]File, error) {
-	pageToken := "first"
+	orderBy := "folder,name,modifiedTime desc"
+	if d.OrderBy != "" {
+		orderBy = d.OrderBy + " " + d.OrderDirection
+	}
+	return d.getFilesByQuery(fmt.Sprintf("'%s' in parents and trashed = false", id), orderBy)
+}
+
+func (d *GoogleDrive) getFilesByParentIDs(parentIDs []string) ([]File, error) {
+	if len(parentIDs) == 0 {
+		return nil, nil
+	}
+	return d.getFilesByQuery(buildListRParentsQuery(parentIDs), "")
+}
+
+func googleDriveListRCheckers() int {
+	if conf.Conf != nil && conf.Conf.IndexListR.Checkers > 0 {
+		return conf.Conf.IndexListR.Checkers
+	}
+	return defaultListRCheckers
+}
+
+func googleDriveListRRequestAttempts() int {
+	if conf.Conf != nil && conf.Conf.IndexListR.RequestMaxAttempts > 0 {
+		return conf.Conf.IndexListR.RequestMaxAttempts
+	}
+	return defaultListRRequestAttempts
+}
+
+func googleDriveListRRetryDelay() time.Duration {
+	if conf.Conf != nil && conf.Conf.IndexListR.RequestRetryDelayMs > 0 {
+		return time.Duration(conf.Conf.IndexListR.RequestRetryDelayMs) * time.Millisecond
+	}
+	return time.Duration(defaultListRRequestRetryDelayMs) * time.Millisecond
+}
+
+func (d *GoogleDrive) getFilesByParentIDsWithRetry(ctx context.Context, parentIDs []string) ([]File, error) {
+	attempts := googleDriveListRRequestAttempts()
+	retryDelay := googleDriveListRRetryDelay()
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if utils.IsCanceled(ctx) {
+			return nil, ctx.Err()
+		}
+		files, err := d.getFilesByParentIDs(parentIDs)
+		if err == nil {
+			return files, nil
+		}
+		lastErr = err
+		if attempt == attempts {
+			break
+		}
+		log.Warnf("google drive ListR request failed, retrying (%d/%d), parents=%d, err=%v",
+			attempt, attempts, len(parentIDs), err)
+		backoff := time.Duration(attempt) * retryDelay
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil, lastErr
+}
+
+func buildListRParentsQuery(parentIDs []string) string {
+	parentsExpr := make([]string, 0, len(parentIDs))
+	for i := range parentIDs {
+		parentsExpr = append(parentsExpr, fmt.Sprintf("'%s' in parents", parentIDs[i]))
+	}
+	return fmt.Sprintf("(%s) and trashed = false", strings.Join(parentsExpr, " or "))
+}
+
+func (d *GoogleDrive) getFilesByQuery(query, orderBy string) ([]File, error) {
+	pageToken := ""
 	res := make([]File, 0)
-	for pageToken != "" {
-		if pageToken == "first" {
-			pageToken = ""
-		}
+	for {
 		var resp Files
-		orderBy := "folder,name,modifiedTime desc"
-		if d.OrderBy != "" {
-			orderBy = d.OrderBy + " " + d.OrderDirection
-		}
-		query := map[string]string{
-			"orderBy":  orderBy,
+		queryParams := map[string]string{
 			"fields":   FilesListFields,
 			"pageSize": "1000",
-			"q":        fmt.Sprintf("'%s' in parents and trashed = false", id),
-			//"includeItemsFromAllDrives": "true",
-			//"supportsAllDrives":         "true",
-			"pageToken": pageToken,
+			"q":        query,
+		}
+		if pageToken != "" {
+			queryParams["pageToken"] = pageToken
+		}
+		if orderBy != "" {
+			queryParams["orderBy"] = orderBy
 		}
 		_, err := d.request("https://www.googleapis.com/drive/v3/files", http.MethodGet, func(req *resty.Request) {
-			req.SetQueryParams(query)
+			req.SetQueryParams(queryParams)
 		}, &resp)
 		if err != nil {
 			return nil, err
 		}
+		d.fillShortcutFileInfo(&resp)
+		res = append(res, resp.Files...)
+		if resp.NextPageToken == "" {
+			break
+		}
 		pageToken = resp.NextPageToken
+	}
+	return res, nil
+}
 
-		// Batch process shortcuts, API calls only for file shortcuts
-		shortcutTargetIds := make([]string, 0)
-		shortcutIndices := make([]int, 0)
+func (d *GoogleDrive) fillShortcutFileInfo(resp *Files) {
+	shortcutTargetIds := make([]string, 0)
+	shortcutIndices := make([]int, 0)
+	for i := range resp.Files {
+		if resp.Files[i].MimeType == "application/vnd.google-apps.shortcut" &&
+			resp.Files[i].ShortcutDetails.TargetId != "" &&
+			resp.Files[i].ShortcutDetails.TargetMimeType != "application/vnd.google-apps.folder" {
+			shortcutTargetIds = append(shortcutTargetIds, resp.Files[i].ShortcutDetails.TargetId)
+			shortcutIndices = append(shortcutIndices, i)
+		}
+	}
+	if len(shortcutTargetIds) == 0 {
+		return
+	}
+	targetFiles := d.batchGetTargetFilesInfo(shortcutTargetIds)
+	for i, targetID := range shortcutTargetIds {
+		targetFile, ok := targetFiles[targetID]
+		if !ok {
+			continue
+		}
+		fileIndex := shortcutIndices[i]
+		if targetFile.Size != "" {
+			resp.Files[fileIndex].Size = targetFile.Size
+		}
+		if targetFile.MD5Checksum != "" {
+			resp.Files[fileIndex].MD5Checksum = targetFile.MD5Checksum
+		}
+		if targetFile.SHA1Checksum != "" {
+			resp.Files[fileIndex].SHA1Checksum = targetFile.SHA1Checksum
+		}
+		if targetFile.SHA256Checksum != "" {
+			resp.Files[fileIndex].SHA256Checksum = targetFile.SHA256Checksum
+		}
+	}
+}
 
-		// Collect target IDs of all file shortcuts (skip folder shortcuts)
-		for i := range resp.Files {
-			if resp.Files[i].MimeType == "application/vnd.google-apps.shortcut" &&
-				resp.Files[i].ShortcutDetails.TargetId != "" &&
-				resp.Files[i].ShortcutDetails.TargetMimeType != "application/vnd.google-apps.folder" {
-				shortcutTargetIds = append(shortcutTargetIds, resp.Files[i].ShortcutDetails.TargetId)
-				shortcutIndices = append(shortcutIndices, i)
+type googleDriveListRTask struct {
+	id    string
+	path  string
+	depth int
+}
+
+func (d *GoogleDrive) ensureListRStateLocked() {
+	if d.listRGrouping <= 0 {
+		d.listRGrouping = listRGrouping
+	}
+	if d.listREmpties == nil {
+		d.listREmpties = make(map[string]struct{})
+	}
+}
+
+func (d *GoogleDrive) getListRGrouping() int {
+	d.listRMu.Lock()
+	defer d.listRMu.Unlock()
+	d.ensureListRStateLocked()
+	return d.listRGrouping
+}
+
+func (d *GoogleDrive) disableListRGrouping() bool {
+	d.listRMu.Lock()
+	defer d.listRMu.Unlock()
+	d.ensureListRStateLocked()
+	if d.listRGrouping == 1 {
+		return false
+	}
+	d.listRGrouping = 1
+	return true
+}
+
+func (d *GoogleDrive) markListREmpties(parentIDs []string) {
+	d.listRMu.Lock()
+	defer d.listRMu.Unlock()
+	d.ensureListRStateLocked()
+	for i := range parentIDs {
+		d.listREmpties[parentIDs[i]] = struct{}{}
+	}
+}
+
+func (d *GoogleDrive) maybeReenableListRGrouping(parentID string) bool {
+	d.listRMu.Lock()
+	defer d.listRMu.Unlock()
+	d.ensureListRStateLocked()
+	if _, ok := d.listREmpties[parentID]; !ok {
+		return false
+	}
+	delete(d.listREmpties, parentID)
+	if len(d.listREmpties) != 0 {
+		return false
+	}
+	if d.listRGrouping == listRGrouping {
+		return false
+	}
+	d.listRGrouping = listRGrouping
+	return true
+}
+
+func (d *GoogleDrive) ListR(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback driver.ListRCallback) error {
+	_ = args
+	if maxDepth == 0 {
+		return nil
+	}
+	rootID := dir.GetID()
+	if rootID == "" {
+		return fmt.Errorf("google drive ListR: empty root id")
+	}
+	rootPath := utils.FixAndCleanPath(dir.GetPath())
+	if rootPath == "" {
+		rootPath = "/"
+	}
+
+	type sendJobFunc func(job googleDriveListRTask)
+	checkers := googleDriveListRCheckers()
+	var (
+		mu       sync.Mutex // protects in and overflow
+		wg       sync.WaitGroup
+		workerWg sync.WaitGroup
+		in       = make(chan googleDriveListRTask, listRInputBuffer)
+		out      = make(chan error, checkers)
+		overflow = make([]googleDriveListRTask, 0)
+
+		visitedMu sync.Mutex
+		visited   = map[string]struct{}{rootID: {}}
+
+		stopped atomic.Bool
+		errOnce sync.Once
+		retErr  error
+	)
+
+	fail := func(err error) {
+		if err == nil {
+			return
+		}
+		errOnce.Do(func() {
+			retErr = err
+			stopped.Store(true)
+			mu.Lock()
+			if in != nil {
+				close(in)
+				in = nil
+			}
+			overflow = nil
+			mu.Unlock()
+		})
+	}
+
+	sendJob := func(job googleDriveListRTask) {
+		if stopped.Load() {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if in == nil || stopped.Load() {
+			return
+		}
+		wg.Add(1)
+		select {
+		case in <- job:
+		default:
+			overflow = append(overflow, job)
+			wg.Done()
+		}
+	}
+
+	processChunk := func(chunk []googleDriveListRTask, grouping int, send sendJobFunc) error {
+		parentIDs := make([]string, 0, len(chunk))
+		taskByParentID := make(map[string]googleDriveListRTask, len(chunk))
+		for i := range chunk {
+			parentIDs = append(parentIDs, chunk[i].id)
+			taskByParentID[chunk[i].id] = chunk[i]
+		}
+		files, err := d.getFilesByParentIDsWithRetry(ctx, parentIDs)
+		if err != nil {
+			return err
+		}
+
+		visitedMu.Lock()
+		entriesByParent, nextTasks := mapGoogleDriveListRFiles(files, parentIDs, taskByParentID, maxDepth, visited)
+		visitedMu.Unlock()
+
+		foundItems := len(entriesByParent) > 0
+		if len(parentIDs) > 1 && !foundItems && grouping > 1 {
+			if d.disableListRGrouping() {
+				log.Debugf("google drive ListR disabled grouping to work around grouped-empty query bug")
+			}
+			d.markListREmpties(parentIDs)
+			for i := range chunk {
+				send(chunk[i])
+			}
+			return nil
+		}
+		if grouping == 1 && len(parentIDs) == 1 && !foundItems {
+			if d.maybeReenableListRGrouping(parentIDs[0]) {
+				log.Debugf("google drive ListR re-enabled grouping after grouped-empty false detection")
 			}
 		}
 
-		// Batch get target file info (only for file shortcuts)
-		if len(shortcutTargetIds) > 0 {
-			targetFiles := d.batchGetTargetFilesInfo(shortcutTargetIds)
-			// Update shortcut file info
-			for j, targetId := range shortcutTargetIds {
-				if targetFile, exists := targetFiles[targetId]; exists {
-					fileIndex := shortcutIndices[j]
-					if targetFile.Size != "" {
-						resp.Files[fileIndex].Size = targetFile.Size
-					}
-					if targetFile.MD5Checksum != "" {
-						resp.Files[fileIndex].MD5Checksum = targetFile.MD5Checksum
-					}
-					if targetFile.SHA1Checksum != "" {
-						resp.Files[fileIndex].SHA1Checksum = targetFile.SHA1Checksum
-					}
-					if targetFile.SHA256Checksum != "" {
-						resp.Files[fileIndex].SHA256Checksum = targetFile.SHA256Checksum
-					}
+		parentPaths := make([]string, 0, len(entriesByParent))
+		for parent := range entriesByParent {
+			parentPaths = append(parentPaths, parent)
+		}
+		sort.Strings(parentPaths)
+		if callback != nil {
+			for i := range parentPaths {
+				if err := callback(parentPaths[i], entriesByParent[parentPaths[i]]); err != nil {
+					return err
 				}
 			}
 		}
-
-		res = append(res, resp.Files...)
+		for i := range nextTasks {
+			send(nextTasks[i])
+		}
+		return nil
 	}
-	return res, nil
+
+	worker := func() {
+		defer workerWg.Done()
+		for task := range in {
+			chunk := []googleDriveListRTask{task}
+			grouping := d.getListRGrouping()
+			if grouping <= 0 {
+				grouping = listRGrouping
+			}
+		waitloop:
+			for i := 1; i < grouping; i++ {
+				select {
+				case t, ok := <-in:
+					if !ok {
+						break waitloop
+					}
+					chunk = append(chunk, t)
+				default:
+				}
+			}
+
+			if stopped.Load() {
+				for range chunk {
+					wg.Done()
+				}
+				continue
+			}
+			if utils.IsCanceled(ctx) {
+				for range chunk {
+					wg.Done()
+				}
+				fail(ctx.Err())
+				out <- ctx.Err()
+				return
+			}
+			err := processChunk(chunk, grouping, sendJob)
+			for range chunk {
+				wg.Done()
+			}
+			if err != nil {
+				fail(err)
+				out <- err
+				return
+			}
+		}
+		out <- nil
+	}
+
+	wg.Add(1)
+	in <- googleDriveListRTask{id: rootID, path: rootPath, depth: 0}
+	for i := 0; i < checkers; i++ {
+		workerWg.Add(1)
+		go worker()
+	}
+
+	go func() {
+		wg.Wait()
+		for {
+			mu.Lock()
+			if in == nil {
+				mu.Unlock()
+				return
+			}
+			if len(overflow) == 0 {
+				close(in)
+				in = nil
+				mu.Unlock()
+				return
+			}
+			l := min(len(overflow), listRInputBuffer/2)
+			batch := append([]googleDriveListRTask(nil), overflow[:l]...)
+			wg.Add(l)
+			for _, job := range batch {
+				in <- job
+			}
+			overflow = overflow[l:]
+			mu.Unlock()
+			wg.Wait()
+		}
+	}()
+
+	for i := 0; i < checkers; i++ {
+		if e := <-out; e != nil {
+			fail(e)
+		}
+	}
+	workerWg.Wait()
+	close(out)
+	return retErr
+}
+
+func mapGoogleDriveListRFiles(files []File, parentIDs []string, taskByParentID map[string]googleDriveListRTask,
+	maxDepth int, visitedDirIDs map[string]struct{}) (map[string][]model.Obj, []googleDriveListRTask) {
+	entriesByParent := make(map[string][]model.Obj)
+	nextTasks := make([]googleDriveListRTask, 0)
+	for i := range files {
+		file := files[i]
+		if len(file.Parents) == 0 {
+			if len(parentIDs) != 1 {
+				continue
+			}
+			rootParentTask, ok := taskByParentID[parentIDs[0]]
+			if !ok || rootParentTask.path != "/" {
+				continue
+			}
+			file.Parents = []string{parentIDs[0]}
+		}
+		for _, parentID := range file.Parents {
+			parentTask, ok := taskByParentID[parentID]
+			if !ok {
+				continue
+			}
+			obj := fileToObj(file)
+			entriesByParent[parentTask.path] = append(entriesByParent[parentTask.path], obj)
+			if !obj.IsDir() {
+				continue
+			}
+			nextDepth := parentTask.depth + 1
+			if maxDepth >= 0 && nextDepth >= maxDepth {
+				continue
+			}
+			if _, seen := visitedDirIDs[obj.GetID()]; seen {
+				continue
+			}
+			visitedDirIDs[obj.GetID()] = struct{}{}
+			nextTasks = append(nextTasks, googleDriveListRTask{
+				id:    obj.GetID(),
+				path:  stdpath.Join(parentTask.path, obj.GetName()),
+				depth: nextDepth,
+			})
+		}
+	}
+	return entriesByParent, nextTasks
 }
 
 // getTargetFileInfo gets target file details for shortcuts

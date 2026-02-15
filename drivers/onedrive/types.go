@@ -29,9 +29,13 @@ type File struct {
 	Size           int64                `json:"size"`
 	FileSystemInfo *FileSystemInfoFacet `json:"fileSystemInfo"`
 	Url            string               `json:"@microsoft.graph.downloadUrl"`
+	Deleted        *struct{}            `json:"deleted"`
 	File           *struct {
 		MimeType string `json:"mimeType"`
 	} `json:"file"`
+	RemoteItem *struct {
+		Folder *struct{} `json:"folder"`
+	} `json:"remoteItem"`
 	Thumbnails []struct {
 		Medium struct {
 			Url string `json:"url"`
@@ -39,6 +43,8 @@ type File struct {
 	} `json:"thumbnails"`
 	ParentReference struct {
 		DriveId string `json:"driveId"`
+		Id      string `json:"id"`
+		Path    string `json:"path"`
 	} `json:"parentReference"`
 }
 
@@ -52,14 +58,21 @@ func fileToObj(f File, parentID string) *Object {
 	if len(f.Thumbnails) > 0 {
 		thumb = f.Thumbnails[0].Medium.Url
 	}
+	var modified, created time.Time
+	if f.FileSystemInfo != nil {
+		modified = f.FileSystemInfo.LastModifiedDateTime
+		created = f.FileSystemInfo.CreatedDateTime
+	}
+	isFolder := f.File == nil
 	return &Object{
 		ObjThumb: model.ObjThumb{
 			Object: model.Object{
 				ID:       f.Id,
 				Name:     f.Name,
 				Size:     f.Size,
-				Modified: f.FileSystemInfo.LastModifiedDateTime,
-				IsFolder: f.File == nil,
+				Modified: modified,
+				Ctime:    created,
+				IsFolder: isFolder,
 			},
 			Thumbnail: model.Thumbnail{Thumbnail: thumb},
 			//Url:       model.Url{Url: f.Url},
@@ -69,8 +82,9 @@ func fileToObj(f File, parentID string) *Object {
 }
 
 type Files struct {
-	Value    []File `json:"value"`
-	NextLink string `json:"@odata.nextLink"`
+	Value     []File `json:"value"`
+	NextLink  string `json:"@odata.nextLink"`
+	DeltaLink string `json:"@odata.deltaLink"`
 }
 
 // Metadata represents a request to update Metadata.
