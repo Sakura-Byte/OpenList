@@ -13,12 +13,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const (
-	walkListRetryAttempts = 10
-	walkListRetryDelay    = 200 * time.Millisecond
-	walkListMaxBackoff    = 5 * time.Second
-)
-
 // WalkFS traverses filesystem fs starting at name up to depth levels.
 //
 // WalkFS will stop when current depth > `depth`. For each visited node,
@@ -131,20 +125,27 @@ func WalkFSParallel(ctx context.Context, depth int, name string, info model.Obj,
 }
 
 func walkListWithRetry(ctx context.Context, name string, args *ListArgs) ([]model.Obj, error) {
+	retryCfg := conf.Conf.IndexWalkRetry
+	maxAttempts := retryCfg.MaxAttempts
+	retryDelay := time.Duration(retryCfg.DelayMs) * time.Millisecond
+	maxBackoff := time.Duration(retryCfg.MaxBackoffMs) * time.Millisecond
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
 	var lastErr error
-	for attempt := 1; attempt <= walkListRetryAttempts; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		objs, err := List(ctx, name, args)
 		if err == nil {
 			return objs, nil
 		}
 		lastErr = err
-		log.Warnf("walk list %s failed on attempt %d/%d: %+v", name, attempt, walkListRetryAttempts, err)
-		if attempt == walkListRetryAttempts {
+		log.Warnf("walk list %s failed on attempt %d/%d: %+v", name, attempt, maxAttempts, err)
+		if attempt == maxAttempts {
 			break
 		}
-		backoff := time.Duration(1<<(attempt-1)) * walkListRetryDelay
-		if backoff > walkListMaxBackoff {
-			backoff = walkListMaxBackoff
+		backoff := time.Duration(1<<(attempt-1)) * retryDelay
+		if backoff > maxBackoff {
+			backoff = maxBackoff
 		}
 		select {
 		case <-ctx.Done():

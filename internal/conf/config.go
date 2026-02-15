@@ -95,6 +95,12 @@ type Cors struct {
 	AllowHeaders []string `json:"allow_headers" env:"ALLOW_HEADERS"`
 }
 
+type IndexWalkRetry struct {
+	MaxAttempts  int `json:"max_attempts" env:"MAX_ATTEMPTS"`
+	DelayMs      int `json:"delay_ms" env:"DELAY_MS"`
+	MaxBackoffMs int `json:"max_backoff_ms" env:"MAX_BACKOFF_MS"`
+}
+
 type S3 struct {
 	Enable bool `json:"enable" env:"ENABLE"`
 	Port   int  `json:"port" env:"PORT"`
@@ -120,32 +126,33 @@ type SFTP struct {
 }
 
 type Config struct {
-	Force                 bool        `json:"force" env:"FORCE"`
-	SiteURL               string      `json:"site_url" env:"SITE_URL"`
-	Cdn                   string      `json:"cdn" env:"CDN"`
-	JwtSecret             string      `json:"jwt_secret" env:"JWT_SECRET"`
-	TokenExpiresIn        int         `json:"token_expires_in" env:"TOKEN_EXPIRES_IN"`
-	Database              Database    `json:"database" envPrefix:"DB_"`
-	Meilisearch           Meilisearch `json:"meilisearch" envPrefix:"MEILISEARCH_"`
-	Scheme                Scheme      `json:"scheme"`
-	TempDir               string      `json:"temp_dir" env:"TEMP_DIR"`
-	BleveDir              string      `json:"bleve_dir" env:"BLEVE_DIR"`
-	DistDir               string      `json:"dist_dir"`
-	Log                   LogConfig   `json:"log" envPrefix:"LOG_"`
-	DelayedStart          int         `json:"delayed_start" env:"DELAYED_START"`
-	MaxBufferLimit        int         `json:"max_buffer_limitMB" env:"MAX_BUFFER_LIMIT_MB"`
-	MmapThreshold         int         `json:"mmap_thresholdMB" env:"MMAP_THRESHOLD_MB"`
-	MaxConnections        int         `json:"max_connections" env:"MAX_CONNECTIONS"`
-	MaxConcurrency        int         `json:"max_concurrency" env:"MAX_CONCURRENCY"`
-	TlsInsecureSkipVerify bool        `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
-	Tasks                 TasksConfig `json:"tasks" envPrefix:"TASKS_"`
-	FairQueue             FairQueue   `json:"fair_queue" envPrefix:"FAIRQUEUE_"`
-	Cors                  Cors        `json:"cors" envPrefix:"CORS_"`
-	S3                    S3          `json:"s3" envPrefix:"S3_"`
-	FTP                   FTP         `json:"ftp" envPrefix:"FTP_"`
-	SFTP                  SFTP        `json:"sftp" envPrefix:"SFTP_"`
-	LastLaunchedVersion   string      `json:"last_launched_version"`
-	ProxyAddress          string      `json:"proxy_address" env:"PROXY_ADDRESS"`
+	Force                 bool           `json:"force" env:"FORCE"`
+	SiteURL               string         `json:"site_url" env:"SITE_URL"`
+	Cdn                   string         `json:"cdn" env:"CDN"`
+	JwtSecret             string         `json:"jwt_secret" env:"JWT_SECRET"`
+	TokenExpiresIn        int            `json:"token_expires_in" env:"TOKEN_EXPIRES_IN"`
+	Database              Database       `json:"database" envPrefix:"DB_"`
+	Meilisearch           Meilisearch    `json:"meilisearch" envPrefix:"MEILISEARCH_"`
+	Scheme                Scheme         `json:"scheme"`
+	TempDir               string         `json:"temp_dir" env:"TEMP_DIR"`
+	BleveDir              string         `json:"bleve_dir" env:"BLEVE_DIR"`
+	DistDir               string         `json:"dist_dir"`
+	Log                   LogConfig      `json:"log" envPrefix:"LOG_"`
+	DelayedStart          int            `json:"delayed_start" env:"DELAYED_START"`
+	MaxBufferLimit        int            `json:"max_buffer_limitMB" env:"MAX_BUFFER_LIMIT_MB"`
+	MmapThreshold         int            `json:"mmap_thresholdMB" env:"MMAP_THRESHOLD_MB"`
+	MaxConnections        int            `json:"max_connections" env:"MAX_CONNECTIONS"`
+	MaxConcurrency        int            `json:"max_concurrency" env:"MAX_CONCURRENCY"`
+	TlsInsecureSkipVerify bool           `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
+	Tasks                 TasksConfig    `json:"tasks" envPrefix:"TASKS_"`
+	FairQueue             FairQueue      `json:"fair_queue" envPrefix:"FAIRQUEUE_"`
+	Cors                  Cors           `json:"cors" envPrefix:"CORS_"`
+	S3                    S3             `json:"s3" envPrefix:"S3_"`
+	FTP                   FTP            `json:"ftp" envPrefix:"FTP_"`
+	SFTP                  SFTP           `json:"sftp" envPrefix:"SFTP_"`
+	IndexWalkRetry        IndexWalkRetry `json:"index_walk_retry" envPrefix:"INDEX_WALK_RETRY_"`
+	LastLaunchedVersion   string         `json:"last_launched_version"`
+	ProxyAddress          string         `json:"proxy_address" env:"PROXY_ADDRESS"`
 }
 
 func DefaultConfig(dataDir string) *Config {
@@ -269,6 +276,11 @@ func DefaultConfig(dataDir string) *Config {
 		SFTP: SFTP{
 			Enable: false,
 			Listen: ":5222",
+		},
+		IndexWalkRetry: IndexWalkRetry{
+			MaxAttempts:  10,
+			DelayMs:      200,
+			MaxBackoffMs: 5000,
 		},
 		LastLaunchedVersion: "",
 		ProxyAddress:        "",
