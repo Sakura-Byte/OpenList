@@ -18,6 +18,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
+	log "github.com/sirupsen/logrus"
 )
 
 type Alias struct {
@@ -88,10 +89,14 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	}
 	var ret *model.Object
 	provider := ""
+	var lastErr error
 	for _, dst := range dsts {
 		rawPath := stdpath.Join(dst, sub)
 		obj, err := fs.Get(ctx, rawPath, &fs.GetArgs{NoLog: true})
 		if err != nil {
+			if !errs.IsObjectNotFound(err) {
+				lastErr = err
+			}
 			continue
 		}
 		storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
@@ -114,6 +119,9 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		}
 	}
 	if ret == nil {
+		if lastErr != nil {
+			return nil, lastErr
+		}
 		return nil, errs.ObjectNotFound
 	}
 	if provider != "" {
@@ -138,42 +146,171 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		return nil, errs.ObjectNotFound
 	}
 	var objs []model.Obj
+	var lastErr error
+	anySuccess := false
 	for _, dst := range dsts {
 		tmp, err := fs.List(ctx, stdpath.Join(dst, sub), &fs.ListArgs{
 			NoLog:              true,
 			Refresh:            args.Refresh,
 			WithStorageDetails: args.WithStorageDetails && d.DetailsPassThrough,
 		})
-		if err == nil {
-			tmp, err = utils.SliceConvert(tmp, func(obj model.Obj) (model.Obj, error) {
-				objRes := model.Object{
-					Name:     obj.GetName(),
-					Size:     obj.GetSize(),
-					Modified: obj.ModTime(),
-					IsFolder: obj.IsDir(),
-				}
-				if thumb, ok := model.GetThumb(obj); ok {
-					return &model.ObjThumb{
-						Object: objRes,
-						Thumbnail: model.Thumbnail{
-							Thumbnail: thumb,
-						},
-					}, nil
-				}
-				if details, ok := model.GetStorageDetails(obj); ok {
-					return &model.ObjStorageDetails{
-						Obj:                    &objRes,
-						StorageDetailsWithName: *details,
-					}, nil
-				}
-				return &objRes, nil
-			})
+		if err != nil {
+			if !errs.IsObjectNotFound(err) {
+				lastErr = err
+			}
+			continue
 		}
+		anySuccess = true
+		tmp, err = utils.SliceConvert(tmp, func(obj model.Obj) (model.Obj, error) {
+			objRes := model.Object{
+				Name:     obj.GetName(),
+				Size:     obj.GetSize(),
+				Modified: obj.ModTime(),
+				IsFolder: obj.IsDir(),
+			}
+			if thumb, ok := model.GetThumb(obj); ok {
+				return &model.ObjThumb{
+					Object: objRes,
+					Thumbnail: model.Thumbnail{
+						Thumbnail: thumb,
+					},
+				}, nil
+			}
+			if details, ok := model.GetStorageDetails(obj); ok {
+				return &model.ObjStorageDetails{
+					Obj:                    &objRes,
+					StorageDetailsWithName: *details,
+				}, nil
+			}
+			return &objRes, nil
+		})
 		if err == nil {
 			objs = append(objs, tmp...)
 		}
 	}
+	if !anySuccess && lastErr != nil {
+		return nil, lastErr
+	}
+	if lastErr != nil {
+		log.Warnf("alias List partial failure (some backends returned errors): %v", lastErr)
+	}
 	return objs, nil
+}
+
+func (d *Alias) ListR(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback driver.ListRCallback) error {
+	path := dir.GetPath()
+	if utils.PathEqual(path, "/") && !d.autoFlatten {
+		// Non-autoFlatten root: emit root virtual folder entries first, then recurse
+		rootEntries := make([]model.Obj, 0, len(d.rootOrder))
+		for _, k := range d.rootOrder {
+			rootEntries = append(rootEntries, &model.Object{
+				Name:     k,
+				IsFolder: true,
+				Modified: d.Modified,
+			})
+		}
+		if len(rootEntries) > 0 {
+			if err := callback("/", rootEntries); err != nil {
+				return err
+			}
+		}
+		if maxDepth == 1 {
+			return nil
+		}
+		nextDepth := maxDepth
+		if maxDepth > 0 {
+			nextDepth = maxDepth - 1
+		}
+		for _, k := range d.rootOrder {
+			dsts := d.pathMap[k]
+			if err := d.listRForDsts(ctx, dsts, "/"+k, "", args, nextDepth, callback); err != nil {
+				if errors.Is(err, context.Canceled) || utils.IsCanceled(ctx) {
+					return err
+				}
+				log.Warnf("alias ListR for root key %s failed: %v", k, err)
+				// Continue with other keys — don't let one failing key block the rest
+			}
+		}
+		return nil
+	}
+	root, sub := d.getRootAndPath(path)
+	dsts, ok := d.pathMap[root]
+	if !ok {
+		return errs.ObjectNotFound
+	}
+	var aliasPrefix string
+	if d.autoFlatten {
+		aliasPrefix = ""
+	} else {
+		aliasPrefix = "/" + root
+	}
+	return d.listRForDsts(ctx, dsts, aliasPrefix, sub, args, maxDepth, callback)
+}
+
+func (d *Alias) listRForDsts(ctx context.Context, dsts []string, aliasPrefix, sub string,
+	args model.ListArgs, maxDepth int, callback driver.ListRCallback) error {
+	var lastErr error
+	// Track whether ANY callback was invoked (even from a dst that later failed).
+	// This is critical: if we already sent entries via callback, returning an error
+	// would cause listr_walk.go to fallback and duplicate those entries.
+	anyCallbackSent := false
+	wrappedCallback := func(parent string, objs []model.Obj) error {
+		anyCallbackSent = true
+		return callback(parent, objs)
+	}
+	for _, dst := range dsts {
+		rawPath := stdpath.Join(dst, sub)
+		storage, actualPath, err := op.GetStorageAndActualPath(rawPath)
+		if err != nil {
+			log.Warnf("alias ListR: failed to resolve storage for %s: %v", rawPath, err)
+			lastErr = err
+			continue
+		}
+		mountPath := storage.GetStorage().MountPath
+		err = op.WalkStorageRecursive(ctx, storage, actualPath, maxDepth, args,
+			true, nil, func(parent string, objs []model.Obj) error {
+				// Transform parent from underlying storage space to alias path space
+				fullParent := utils.GetFullPath(mountPath, parent)
+				subParent := strings.TrimPrefix(fullParent, dst)
+				if subParent == "" {
+					subParent = "/"
+				}
+				aliasParent := stdpath.Join(aliasPrefix, subParent)
+				if aliasParent == "" {
+					aliasParent = "/"
+				}
+				// Convert objs to plain model.Object to avoid double-wrapping
+				convertedObjs := make([]model.Obj, len(objs))
+				for i, obj := range objs {
+					convertedObjs[i] = &model.Object{
+						Name:     obj.GetName(),
+						Size:     obj.GetSize(),
+						Modified: obj.ModTime(),
+						IsFolder: obj.IsDir(),
+					}
+				}
+				return wrappedCallback(aliasParent, convertedObjs)
+			})
+		if err != nil {
+			if errors.Is(err, context.Canceled) || utils.IsCanceled(ctx) {
+				return err
+			}
+			log.Warnf("alias ListR for %s failed: %v", rawPath, err)
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		if anyCallbackSent {
+			// Some data was already sent via callback. Returning error would cause
+			// listr_walk.go to fallback to recursive List, duplicating entries.
+			// Accept partial results and log the failure.
+			log.Warnf("alias ListR partial failure (some data already sent, skipping fallback): %v", lastErr)
+			return nil
+		}
+		// No data was sent — safe to return error and trigger fallback
+		return lastErr
+	}
+	return nil
 }
 
 func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
@@ -541,3 +678,4 @@ func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 }
 
 var _ driver.Driver = (*Alias)(nil)
+var _ driver.ListRer = (*Alias)(nil)
