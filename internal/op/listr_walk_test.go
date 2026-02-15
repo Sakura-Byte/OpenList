@@ -21,6 +21,8 @@ type fakeListRStorage struct {
 	model.Storage
 	addition     driver.RootPath
 	listMap      map[string][]model.Obj
+	listFailLeft map[string]int
+	listFailErr  error
 	listRErr     error
 	listRBatches []fakeListRBatch
 	listCalls    int
@@ -46,6 +48,13 @@ func (f *fakeListRStorage) Drop(ctx context.Context) error {
 func (f *fakeListRStorage) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	f.listCalls++
 	p := utils.FixAndCleanPath(dir.GetPath())
+	if left := f.listFailLeft[p]; left > 0 {
+		f.listFailLeft[p] = left - 1
+		if f.listFailErr != nil {
+			return nil, f.listFailErr
+		}
+		return nil, errors.New("transient list error")
+	}
 	src := f.listMap[p]
 	out := make([]model.Obj, 0, len(src))
 	for i := range src {
@@ -190,5 +199,32 @@ func TestWalkStorageRecursive_ListRLimiterByBatch(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
 		t.Fatalf("expected ListR limiter wait, elapsed=%v", elapsed)
+	}
+}
+
+func TestWalkStorageRecursive_ListFallbackRetry(t *testing.T) {
+	storage := &fakeListRStorage{
+		Storage:      model.Storage{MountPath: "/fake-listr-retry", CacheExpiration: 30},
+		addition:     driver.RootPath{RootFolderPath: "/"},
+		listFailLeft: map[string]int{"/": 1},
+		listFailErr:  errors.New("The request has been throttled"),
+		listMap: map[string][]model.Obj{
+			"/": {newFakeObj("a", false)},
+		},
+	}
+	var got int
+	err := WalkStorageRecursive(context.Background(), storage, "/", 1, model.ListArgs{Refresh: true}, false, nil,
+		func(parent string, objs []model.Obj) error {
+			got += len(objs)
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("WalkStorageRecursive error: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("expected 1 object, got %d", got)
+	}
+	if storage.listCalls != 2 {
+		t.Fatalf("expected 2 List calls with retry, got %d", storage.listCalls)
 	}
 }

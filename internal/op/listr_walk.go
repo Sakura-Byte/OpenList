@@ -5,6 +5,7 @@ import (
 	stdpath "path"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -99,7 +100,7 @@ func walkStorageRecursiveByList(ctx context.Context, storage driver.Driver, actu
 	if maxDepth == 0 {
 		return nil
 	}
-	objs, err := List(ctx, storage, actualPath, args)
+	objs, err := walkStorageListWithRetry(ctx, storage, actualPath, args)
 	if err != nil {
 		return err
 	}
@@ -131,4 +132,47 @@ func walkStorageRecursiveByList(ctx context.Context, storage driver.Driver, actu
 		}
 	}
 	return nil
+}
+
+func walkStorageListWithRetry(ctx context.Context, storage driver.Driver, actualPath string, args model.ListArgs) ([]model.Obj, error) {
+	maxAttempts := 1
+	retryDelay := 200 * time.Millisecond
+	maxBackoff := 5 * time.Second
+	if conf.Conf != nil {
+		if conf.Conf.IndexWalkRetry.MaxAttempts > 0 {
+			maxAttempts = conf.Conf.IndexWalkRetry.MaxAttempts
+		}
+		if conf.Conf.IndexWalkRetry.DelayMs > 0 {
+			retryDelay = time.Duration(conf.Conf.IndexWalkRetry.DelayMs) * time.Millisecond
+		}
+		if conf.Conf.IndexWalkRetry.MaxBackoffMs > 0 {
+			maxBackoff = time.Duration(conf.Conf.IndexWalkRetry.MaxBackoffMs) * time.Millisecond
+		}
+	}
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		objs, err := List(ctx, storage, actualPath, args)
+		if err == nil {
+			return objs, nil
+		}
+		if errors.Is(err, context.Canceled) || utils.IsCanceled(ctx) {
+			return nil, err
+		}
+		lastErr = err
+		log.Warnf("walk storage list (%s)[%s] failed on attempt %d/%d: %+v",
+			storage.GetStorage().MountPath, actualPath, attempt, maxAttempts, err)
+		if attempt == maxAttempts {
+			break
+		}
+		backoff := time.Duration(1<<(attempt-1)) * retryDelay
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+	return nil, lastErr
 }
