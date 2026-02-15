@@ -252,7 +252,7 @@ func (d *Onedrive) ListR(ctx context.Context, dir model.Obj, args model.ListArgs
 		return fmt.Errorf("onedrive ListR: empty directory id")
 	}
 
-	nextLink := d.GetMetaUrl(false, "/") + "/delta?$top=1000&$expand=thumbnails($select=medium)&$select=id,name,size,fileSystemInfo,content.downloadUrl,file,parentReference,deleted,remoteItem"
+	nextLink := d.GetMetaUrl(false, "/") + "/delta?$top=1000&$select=id,name,size,fileSystemInfo,file,parentReference,deleted,remoteItem"
 	items := make([]File, 0)
 	for nextLink != "" {
 		if utils.IsCanceled(ctx) {
