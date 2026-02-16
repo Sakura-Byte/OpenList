@@ -24,6 +24,8 @@ type LinkArgs struct {
 	Redirect bool
 }
 
+const LinkTypeAdminGetLink = "__openlist_admin_get_link__"
+
 type Link struct {
 	URL         string        `json:"url"`    // most common way
 	Header      http.Header   `json:"header"` // needed header (for url)

@@ -417,7 +417,12 @@ func Link(c *gin.Context) {
 		})
 		return
 	}
-	link, _, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{IP: ip, Header: c.Request.Header, Redirect: true})
+	link, _, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
+		IP:       ip,
+		Header:   c.Request.Header,
+		Type:     model.LinkTypeAdminGetLink,
+		Redirect: true,
+	})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
