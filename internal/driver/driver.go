@@ -118,15 +118,6 @@ type PutURL interface {
 	PutURL(ctx context.Context, dstDir model.Obj, name, url string) error
 }
 
-//type WriteResult interface {
-//	MkdirResult
-//	MoveResult
-//	RenameResult
-//	CopyResult
-//	PutResult
-//	Remove
-//}
-
 type MkdirResult interface {
 	MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error)
 }

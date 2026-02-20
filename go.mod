@@ -1,6 +1,8 @@
 module github.com/OpenListTeam/OpenList/v4
 
-go 1.23.4
+go 1.24.0
+
+toolchain go1.24.13
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.18.1
@@ -9,16 +11,19 @@ require (
 	github.com/KirCute/zip v1.0.1
 	github.com/OpenListTeam/go-cache v0.1.0
 	github.com/OpenListTeam/sftpd-openlist v1.0.1
-	github.com/OpenListTeam/tache v0.2.1
+	github.com/OpenListTeam/tache v0.2.2
 	github.com/OpenListTeam/times v0.1.0
 	github.com/OpenListTeam/wopan-sdk-go v0.1.5
 	github.com/ProtonMail/go-crypto v1.3.0
 	github.com/ProtonMail/gopenpgp/v2 v2.9.0
-	github.com/SheltonZhu/115driver v1.1.1
+	github.com/SheltonZhu/115driver v1.2.3
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
+	github.com/antchfx/htmlquery v1.3.5
+	github.com/antchfx/xpath v1.3.5
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/aws/aws-sdk-go v1.55.7
 	github.com/blevesearch/bleve/v2 v2.5.2
+	github.com/bmatcuk/doublestar/v4 v4.9.1
 	github.com/caarlos0/env/v9 v9.0.0
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.6
@@ -33,7 +38,7 @@ require (
 	github.com/dustinxie/ecc v0.0.0-20210511000915-959544187564
 	github.com/fclairamb/ftpserverlib v0.26.1-0.20250709223522-4a925d79caf6
 	github.com/foxxorcat/mopan-sdk-go v0.1.6
-	github.com/foxxorcat/weiyun-sdk-go v0.1.3
+	github.com/foxxorcat/weiyun-sdk-go v0.1.4
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.10.1
 	github.com/go-resty/resty/v2 v2.16.5
@@ -41,7 +46,7 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/halalcloud/golang-sdk-lite v0.0.0-20251006164234-3c629727c499
+	github.com/halalcloud/golang-sdk-lite v0.0.0-20251105081800-78cbb6786c38
 	github.com/hekmon/transmissionrpc/v3 v3.0.0
 	github.com/henrybear327/go-proton-api v1.0.0
 	github.com/ipfs/go-ipfs-api v0.7.0
@@ -70,11 +75,11 @@ require (
 	github.com/upyun/go-sdk/v3 v3.0.4
 	github.com/winfsp/cgofuse v1.6.0
 	github.com/zzzhr1990/go-common-entity v0.0.0-20250202070650-1a200048f0d3
-	golang.org/x/crypto v0.40.0
+	golang.org/x/crypto v0.46.0
 	golang.org/x/image v0.29.0
-	golang.org/x/net v0.42.0
-	golang.org/x/oauth2 v0.30.0
-	golang.org/x/time v0.12.0
+	golang.org/x/net v0.48.0
+	golang.org/x/oauth2 v0.34.0
+	golang.org/x/time v0.14.0
 	google.golang.org/appengine v1.6.8
 	gopkg.in/ldap.v3 v3.1.0
 	gorm.io/driver/mysql v1.5.7
@@ -84,7 +89,7 @@ require (
 )
 
 require (
-	cloud.google.com/go/compute/metadata v0.7.0 // indirect
+	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.1 // indirect
 	github.com/ProtonMail/bcrypt v0.0.0-20211005172633-e235017c1baf // indirect
 	github.com/ProtonMail/gluon v0.17.1-0.20230724134000-308be39be96e // indirect
@@ -103,6 +108,7 @@ require (
 	github.com/emersion/go-message v0.18.2 // indirect
 	github.com/emersion/go-vcard v0.0.0-20241024213814-c9703dde27ff // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
+	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
 	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
@@ -120,12 +126,12 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.uber.org/mock v0.5.0 // indirect
 	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476 // indirect
-	golang.org/x/mod v0.27.0 // indirect
+	golang.org/x/mod v0.30.0 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 )
 
 require (
-	github.com/OpenListTeam/115-sdk-go v0.2.2
+	github.com/OpenListTeam/115-sdk-go v0.2.3
 	github.com/STARRY-S/zip v0.2.1 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/blevesearch/go-faiss v1.0.25 // indirect
@@ -155,7 +161,7 @@ require (
 	github.com/taruti/bytepool v0.0.0-20160310082835-5e3a9ea56543 // indirect
 	github.com/ulikunitz/xz v0.5.12 // indirect
 	github.com/yuin/goldmark v1.7.13
-	go4.org v0.0.0-20230225012048-214862532bf5
+	go4.org v0.0.0-20260112195520-a5071408f32f
 	resty.dev/v3 v3.0.0-beta.2 // indirect
 )
 
@@ -281,14 +287,14 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.etcd.io/bbolt v1.4.0 // indirect
 	golang.org/x/arch v0.18.0 // indirect
-	golang.org/x/sync v0.16.0
-	golang.org/x/sys v0.34.0
-	golang.org/x/term v0.33.0 // indirect
-	golang.org/x/text v0.27.0
-	golang.org/x/tools v0.35.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250603155806-513f23925822 // indirect
-	google.golang.org/grpc v1.73.0
-	google.golang.org/protobuf v1.36.6 // indirect
+	golang.org/x/sync v0.19.0
+	golang.org/x/sys v0.40.0
+	golang.org/x/term v0.38.0 // indirect
+	golang.org/x/text v0.32.0
+	golang.org/x/tools v0.39.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
+	google.golang.org/grpc v1.78.0
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

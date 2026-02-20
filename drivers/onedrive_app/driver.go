@@ -85,7 +85,9 @@ func (d *OnedriveAPP) List(ctx context.Context, dir model.Obj, args model.ListAr
 		return nil, err
 	}
 	return utils.SliceConvert(files, func(src File) (model.Obj, error) {
-		return fileToObj(src, dir.GetID()), nil
+		obj := fileToObj(src, dir.GetID())
+		obj.Path = path.Join(dir.GetPath(), obj.GetName())
+		return obj, nil
 	})
 }
 
@@ -217,7 +219,7 @@ func (d *OnedriveAPP) GetDetails(ctx context.Context) (*model.StorageDetails, er
 	return &model.StorageDetails{
 		DiskUsage: model.DiskUsage{
 			TotalSpace: drive.Quota.Total,
-			FreeSpace:  drive.Quota.Remaining,
+			UsedSpace:  drive.Quota.Used,
 		},
 	}, nil
 }

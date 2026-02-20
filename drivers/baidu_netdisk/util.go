@@ -12,7 +12,6 @@ import (
 	"unicode"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -42,7 +41,6 @@ func (d *BaiduNetdisk) _refreshToken() error {
 			ErrorMessage string `json:"text"`
 		}
 		_, err := base.RestyClient.R().
-			SetHeader("User-Agent", "Mozilla/5.0 (Macintosh; Apple macOS 15_5) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/138.0.0.0 Openlist/425.6.30").
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
@@ -154,7 +152,7 @@ func (d *BaiduNetdisk) postForm(pathname string, params map[string]string, form 
 
 func (d *BaiduNetdisk) getFiles(dir string) ([]File, error) {
 	start := 0
-	limit := 200
+	limit := 1000
 	params := map[string]string{
 		"method": "list",
 		"dir":    dir,
@@ -170,7 +168,6 @@ func (d *BaiduNetdisk) getFiles(dir string) ([]File, error) {
 	for {
 		params["start"] = strconv.Itoa(start)
 		params["limit"] = strconv.Itoa(limit)
-		start += limit
 		var resp ListResp
 		_, err := d.get("/xpan/file", params, &resp)
 		if err != nil {
@@ -189,6 +186,11 @@ func (d *BaiduNetdisk) getFiles(dir string) ([]File, error) {
 		} else {
 			res = append(res, resp.List...)
 		}
+
+		if len(resp.List) < limit {
+			break
+		}
+		start += limit
 	}
 	return res, nil
 }
@@ -391,7 +393,7 @@ func (d *BaiduNetdisk) quota(ctx context.Context) (model.DiskUsage, error) {
 	if err != nil {
 		return model.DiskUsage{}, err
 	}
-	return driver.DiskUsageFromUsedAndTotal(resp.Used, resp.Total), nil
+	return model.DiskUsage{TotalSpace: resp.Total, UsedSpace: resp.Used}, nil
 }
 
 // getUploadUrl 从开放平台获取上传域名/地址，并发请求会被合并，结果会在 uploadid 生命周期内复用。

@@ -33,19 +33,17 @@ type DirReq struct {
 }
 
 type ObjResp struct {
-	Id           string                        `json:"id"`
-	Path         string                        `json:"path"`
-	Name         string                        `json:"name"`
-	Size         int64                         `json:"size"`
-	IsDir        bool                          `json:"is_dir"`
-	Modified     time.Time                     `json:"modified"`
-	Created      time.Time                     `json:"created"`
-	Sign         string                        `json:"sign"`
-	Thumb        string                        `json:"thumb"`
-	Type         int                           `json:"type"`
-	HashInfoStr  string                        `json:"hashinfo"`
-	HashInfo     map[*utils.HashType]string    `json:"hash_info"`
-	MountDetails *model.StorageDetailsWithName `json:"mount_details,omitempty"`
+	Name         string                     `json:"name"`
+	Size         int64                      `json:"size"`
+	IsDir        bool                       `json:"is_dir"`
+	Modified     time.Time                  `json:"modified"`
+	Created      time.Time                  `json:"created"`
+	Sign         string                     `json:"sign"`
+	Thumb        string                     `json:"thumb"`
+	Type         int                        `json:"type"`
+	HashInfoStr  string                     `json:"hashinfo"`
+	HashInfo     map[*utils.HashType]string `json:"hash_info"`
+	MountDetails *model.StorageDetails      `json:"mount_details,omitempty"`
 }
 
 type FsListResp struct {
@@ -235,8 +233,6 @@ func toObjsResp(objs []model.Obj, parent string, encrypt bool, user *model.User,
 		thumb, _ := model.GetThumb(obj)
 		mountDetails, _ := model.GetStorageDetails(obj)
 		resp = append(resp, ObjResp{
-			Id:           obj.GetID(),
-			Path:         obj.GetPath(),
 			Name:         obj.GetName(),
 			Size:         obj.GetSize(),
 			IsDir:        obj.IsDir(),
@@ -367,8 +363,6 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 	mountDetails, _ := model.GetStorageDetails(obj)
 	common.SuccessResp(c, FsGetResp{
 		ObjResp: ObjResp{
-			Id:           obj.GetID(),
-			Path:         obj.GetPath(),
 			Name:         obj.GetName(),
 			Size:         obj.GetSize(),
 			IsDir:        obj.IsDir(),
