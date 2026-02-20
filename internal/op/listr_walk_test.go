@@ -3,6 +3,7 @@ package op
 import (
 	"context"
 	"errors"
+	stdpath "path"
 	"testing"
 	"time"
 
@@ -45,6 +46,15 @@ func (f *fakeListRStorage) Drop(ctx context.Context) error {
 	return nil
 }
 
+func (f *fakeListRStorage) GetRoot(ctx context.Context) (model.Obj, error) {
+	return &model.Object{
+		Name:     "root",
+		Path:     "/",
+		IsFolder: true,
+		Modified: time.Now(),
+	}, nil
+}
+
 func (f *fakeListRStorage) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	f.listCalls++
 	p := utils.FixAndCleanPath(dir.GetPath())
@@ -59,9 +69,13 @@ func (f *fakeListRStorage) List(ctx context.Context, dir model.Obj, args model.L
 	out := make([]model.Obj, 0, len(src))
 	for i := range src {
 		raw := model.UnwrapObj(src[i])
+		objPath := raw.GetPath()
+		if objPath == "" {
+			objPath = stdpath.Join(p, raw.GetName())
+		}
 		obj := &model.Object{
 			ID:       raw.GetID(),
-			Path:     raw.GetPath(),
+			Path:     objPath,
 			Name:     raw.GetName(),
 			Size:     raw.GetSize(),
 			Modified: raw.ModTime(),
