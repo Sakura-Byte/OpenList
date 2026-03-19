@@ -16,6 +16,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	gocache "github.com/OpenListTeam/go-cache"
@@ -555,6 +556,9 @@ func ArchiveDecompress(ctx context.Context, storage driver.Driver, srcPath, dstD
 			}
 			go RecursivelyListStorage(context.Background(), storage, targetPath, limiter, nil)
 		}
+	}
+	if err == nil {
+		updatesite.NotifyCatalogChanged(utils.GetFullPath(storage.GetStorage().MountPath, dstDirPath), updatesite.SourceWrite, updatesite.ReasonDecompress, false, "")
 	}
 	return errors.WithStack(err)
 }

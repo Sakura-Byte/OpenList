@@ -16,6 +16,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
@@ -36,7 +37,7 @@ func Down(c *gin.Context) {
 		Proxy(c)
 		return
 	} else {
-		link, _, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
+		link, obj, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
 			IP:       c.ClientIP(),
 			Header:   c.Request.Header,
 			Type:     c.Query("type"),
@@ -45,6 +46,14 @@ func Down(c *gin.Context) {
 		if err != nil {
 			common.ErrorPage(c, err, 500)
 			return
+		}
+		if c.Query("type") != "thumb" {
+			user, _ := c.Request.Context().Value(conf.UserKey).(*model.User)
+			username := ""
+			if user != nil {
+				username = user.Username
+			}
+			updatesite.NotifyContentAccess(rawPath, obj, updatesite.AccessKindConsume, updatesite.ActorKey(username, c.ClientIP()), c.GetString("X-Request-Id"))
 		}
 		redirect(c, link)
 	}
@@ -74,6 +83,13 @@ func Proxy(c *gin.Context) {
 		if err != nil {
 			common.ErrorPage(c, err, 500)
 			return
+		}
+		if c.Query("type") != "thumb" {
+			username := ""
+			if user != nil {
+				username = user.Username
+			}
+			updatesite.NotifyContentAccess(rawPath, file, updatesite.AccessKindConsume, updatesite.ActorKey(username, ip), c.GetString("X-Request-Id"))
 		}
 		proxy(c, link, file, storage.GetStorage().ProxyRange)
 	} else {

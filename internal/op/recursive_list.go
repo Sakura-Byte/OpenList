@@ -10,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -38,6 +39,10 @@ func BeginManualScan(rawPath string, limit float64) error {
 		err := RecursivelyList(ctx, rawPath, rate.Limit(limit), &ScannedCount)
 		if err != nil {
 			log.Errorf("failed recursively list: %v", err)
+			return
+		}
+		if !utils.IsCanceled(ctx) {
+			updatesite.NotifyCatalogChanged(rawPath, updatesite.SourceManualScan, updatesite.ReasonScan, true, "")
 		}
 	}()
 	return nil

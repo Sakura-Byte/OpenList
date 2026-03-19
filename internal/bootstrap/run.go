@@ -15,6 +15,8 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server"
 	"github.com/OpenListTeam/OpenList/v4/server/middlewares"
@@ -34,6 +36,23 @@ func Init() {
 	Log()
 	InitDB()
 	data.InitData()
+	updatesite.SetConfigProvider(func() updatesite.DeliveryConfig {
+		cfg := updatesite.DeliveryConfig{
+			Enabled:      setting.GetBool(conf.UpdateSiteEnabled),
+			InstanceName: setting.GetStr(conf.UpdateSiteInstanceName),
+			WebhookURL:   setting.GetStr(conf.UpdateSiteWebhookURL),
+			Secret:       setting.GetStr(conf.UpdateSiteWebhookSecret),
+			BaseURL:      conf.Conf.SiteURL,
+		}
+		if cfg.InstanceName == "" {
+			cfg.InstanceName = "main"
+		}
+		if cfg.WebhookURL == "" || cfg.Secret == "" {
+			cfg.Enabled = false
+		}
+		return cfg
+	})
+	updatesite.Init()
 	InitStreamLimit()
 	InitIndex()
 	InitUpgradePatch()

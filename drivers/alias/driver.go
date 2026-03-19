@@ -257,6 +257,19 @@ func (d *Alias) rawPathToAliasPath(rawPath string) string {
 	return rawPath
 }
 
+func (d *Alias) ResolvePublicPath(rawPath string) (string, bool) {
+	rawPath = utils.FixAndCleanPath(rawPath)
+	relPath := d.rawPathToAliasPath(rawPath)
+	if relPath == rawPath {
+		return "", false
+	}
+	mountPath := utils.GetActualMountPath(d.GetStorage().MountPath)
+	if relPath == "/" {
+		return mountPath, true
+	}
+	return utils.FixAndCleanPath(stdpath.Join(mountPath, relPath)), true
+}
+
 func (d *Alias) ListR(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback driver.ListRCallback) error {
 	if maxDepth == 0 || callback == nil {
 		return nil

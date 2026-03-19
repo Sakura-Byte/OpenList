@@ -13,6 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
+	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
@@ -124,6 +125,9 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		Provider:          provider,
 		DirectUploadTools: directUploadTools,
 	})
+	if req.Refresh {
+		updatesite.NotifyCatalogChanged(reqPath, updatesite.SourceRefresh, updatesite.ReasonRefresh, false, c.GetString("X-Request-Id"))
+	}
 }
 
 func FsDirs(c *gin.Context) {
@@ -381,6 +385,9 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 		Provider: provider,
 		Related:  toObjsResp(related, parentPath, isEncrypt(parentMeta, parentPath), user, ip),
 	})
+	if !obj.IsDir() {
+		updatesite.NotifyContentAccess(reqPath, obj, updatesite.AccessKindDetail, updatesite.ActorKey(user.Username, ip), c.GetString("X-Request-Id"))
+	}
 }
 
 func filterRelated(objs []model.Obj, obj model.Obj) []model.Obj {

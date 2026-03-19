@@ -7,6 +7,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/search"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
+	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -34,7 +35,9 @@ func BuildIndex(c *gin.Context) {
 			conf.SlicesMap[conf.IgnorePaths], setting.GetInt(conf.MaxIndexDepth, 20), true)
 		if err != nil {
 			log.Errorf("build index error: %+v", err)
+			return
 		}
+		updatesite.NotifyCatalogChanged("/", updatesite.SourceIndex, updatesite.ReasonIndexUpdate, true, "")
 	}()
 	common.SuccessResp(c)
 }
@@ -66,6 +69,10 @@ func UpdateIndex(c *gin.Context) {
 			conf.SlicesMap[conf.IgnorePaths], req.MaxDepth, false)
 		if err != nil {
 			log.Errorf("update index error: %+v", err)
+			return
+		}
+		for _, path := range req.Paths {
+			updatesite.NotifyCatalogChanged(path, updatesite.SourceIndex, updatesite.ReasonIndexUpdate, true, "")
 		}
 	}()
 	common.SuccessResp(c)

@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/bmatcuk/doublestar/v4"
@@ -436,6 +437,13 @@ func Move(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			cache.UpdateObject(srcRawObj.GetName(), newObj)
 		}
 	}
+	srcPublicDirPath := utils.GetFullPath(storage.GetStorage().MountPath, srcDirPath)
+	dstPublicDirPath := utils.GetFullPath(storage.GetStorage().MountPath, dstDirPath)
+	updatesite.NotifyCatalogChanged(srcPublicDirPath, updatesite.SourceWrite, updatesite.ReasonMove, false, "")
+	updatesite.NotifyCatalogChanged(dstPublicDirPath, updatesite.SourceWrite, updatesite.ReasonMove, false, "")
+	if srcObj.IsDir() {
+		updatesite.NotifyCatalogChanged(utils.GetFullPath(storage.GetStorage().MountPath, stdpath.Join(dstDirPath, srcObj.GetName())), updatesite.SourceWrite, updatesite.ReasonMove, true, "")
+	}
 
 	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
 		return nil
@@ -495,15 +503,20 @@ func Rename(ctx context.Context, storage driver.Driver, srcPath, dstName string)
 			cache.UpdateObject(srcRawObj.GetName(), newObj)
 		}
 	}
+	dstDirPath := stdpath.Dir(srcPath)
+	dstPublicDirPath := utils.GetFullPath(storage.GetStorage().MountPath, dstDirPath)
+	updatesite.NotifyCatalogChanged(dstPublicDirPath, updatesite.SourceWrite, updatesite.ReasonRename, false, "")
+	if srcObj.IsDir() {
+		updatesite.NotifyCatalogChanged(utils.GetFullPath(storage.GetStorage().MountPath, stdpath.Join(dstDirPath, dstName)), updatesite.SourceWrite, updatesite.ReasonRename, true, "")
+	}
 
 	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
 		return nil
 	}
-	dstDirPath := stdpath.Dir(srcPath)
 	if !srcObj.IsDir() {
 		go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 	} else {
-		go objsUpdateHook(context.WithoutCancel(ctx), storage, stdpath.Join(dstDirPath, srcObj.GetName()), true)
+		go objsUpdateHook(context.WithoutCancel(ctx), storage, stdpath.Join(dstDirPath, dstName), true)
 	}
 	return nil
 }
@@ -561,6 +574,11 @@ func Copy(ctx context.Context, storage driver.Driver, srcPath, dstDirPath string
 			cache.UpdateObject(srcRawObj.GetName(), newObj)
 		}
 	}
+	dstPublicDirPath := utils.GetFullPath(storage.GetStorage().MountPath, dstDirPath)
+	updatesite.NotifyCatalogChanged(dstPublicDirPath, updatesite.SourceWrite, updatesite.ReasonCopy, false, "")
+	if srcObj.IsDir() {
+		updatesite.NotifyCatalogChanged(utils.GetFullPath(storage.GetStorage().MountPath, stdpath.Join(dstDirPath, srcObj.GetName())), updatesite.SourceWrite, updatesite.ReasonCopy, true, "")
+	}
 
 	if ctx.Value(conf.SkipHookKey) != nil || !needHandleObjsUpdateHook() {
 		return nil
@@ -600,6 +618,7 @@ func Remove(ctx context.Context, storage driver.Driver, path string) error {
 		err = s.Remove(ctx, model.UnwrapObjName(rawObj))
 		if err == nil {
 			Cache.removeDirectoryObject(storage, dirPath, rawObj)
+			updatesite.NotifyCatalogChanged(utils.GetFullPath(storage.GetStorage().MountPath, dirPath), updatesite.SourceWrite, updatesite.ReasonRemove, false, "")
 		}
 	default:
 		return errs.NotImplement
@@ -697,6 +716,7 @@ func Put(ctx context.Context, storage driver.Driver, dstDirPath string, file mod
 		if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
 			go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 		}
+		updatesite.NotifyCatalogChanged(utils.GetFullPath(storage.GetStorage().MountPath, dstDirPath), updatesite.SourceWrite, updatesite.ReasonUpload, false, "")
 	}
 	log.Debugf("put file [%s] done", file.GetName())
 	if storage.Config().NoOverwriteUpload && fi != nil && fi.GetSize() > 0 {
@@ -764,6 +784,7 @@ func PutURL(ctx context.Context, storage driver.Driver, dstDirPath, dstName, url
 			if ctx.Value(conf.SkipHookKey) == nil && needHandleObjsUpdateHook() {
 				go objsUpdateHook(context.WithoutCancel(ctx), storage, dstDirPath, false)
 			}
+			updatesite.NotifyCatalogChanged(utils.GetFullPath(storage.GetStorage().MountPath, dstDirPath), updatesite.SourceWrite, updatesite.ReasonUpload, false, "")
 		}
 	}
 	log.Debugf("put url [%s](%s) done", dstName, url)

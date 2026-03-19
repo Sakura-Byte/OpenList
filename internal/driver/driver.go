@@ -226,3 +226,9 @@ type DirectUploader interface {
 	// return errs.NotImplement if the driver does not support the given direct upload tool
 	GetDirectUploadInfo(ctx context.Context, tool string, dstDir model.Obj, fileName string, fileSize int64) (any, error)
 }
+
+type PublicPathResolver interface {
+	// ResolvePublicPath converts a backend/raw path into a user-visible path.
+	// It returns false when the raw path is not covered by the driver.
+	ResolvePublicPath(rawPath string) (string, bool)
+}
