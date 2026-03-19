@@ -128,7 +128,7 @@ func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(
 		var obj model.Obj
 		temp, isTemp := o.(*tempObj)
 		if isTemp {
-			obj, err = fs.Get(ctx, o.GetPath(), &fs.GetArgs{NoLog: true})
+			obj, err = fs.Get(ctx, getRawPath(o), &fs.GetArgs{NoLog: true})
 			if err == nil {
 				if !bObj.IsDir() {
 					if obj.IsDir() {
@@ -174,14 +174,14 @@ func (d *Alias) getAllObjs(ctx context.Context, bObj model.Obj, ifContinue func(
 
 func (d *Alias) getBalancedPath(ctx context.Context, file model.Obj) string {
 	if d.ReadConflictPolicy == FirstRWP {
-		return file.GetPath()
+		return getRawPath(file)
 	}
 	files := file.(BalancedObjs)
 	if rand.Intn(len(files)) == 0 {
-		return file.GetPath()
+		return getRawPath(file)
 	}
 	files, _ = d.getAllObjs(ctx, file, getWriteAndPutFilterFunc(AllRWP))
-	return files[rand.Intn(len(files))].GetPath()
+	return getRawPath(files[rand.Intn(len(files))])
 }
 
 func getWriteAndPutFilterFunc(policy string) func(error) (bool, error) {
@@ -262,7 +262,7 @@ func getRandomObjByQuotaBalanced(ctx context.Context, reqPath BalancedObjs, stri
 	detailsChan := make(chan detailWithIndex, len(reqPath))
 	workerCount := 0
 	for i, p := range reqPath {
-		s, err := fs.GetStorage(p.GetPath(), &fs.GetStoragesArgs{})
+		s, err := fs.GetStorage(getRawPath(p), &fs.GetStoragesArgs{})
 		if err != nil {
 			continue
 		}
@@ -347,7 +347,8 @@ func (d *Alias) getCopyObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	dstStorageMap := make(map[string][]model.Obj)
 	allocatingDst := make(map[model.Obj]struct{})
 	for _, o := range dstObjs {
-		storage, e := fs.GetStorage(o.GetPath(), &fs.GetStoragesArgs{})
+		rawPath := getRawPath(o)
+		storage, e := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
 		if e != nil {
 			return nil, nil, errors.WithMessagef(e, "cannot copy to virtual path [%s]", o.GetPath())
 		}
@@ -361,7 +362,7 @@ func (d *Alias) getCopyObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	}
 	srcObjs := make(BalancedObjs, 0, len(dstObjs))
 	for _, src := range tmpSrcObjs {
-		storage, e := fs.GetStorage(src.GetPath(), &fs.GetStoragesArgs{})
+		storage, e := fs.GetStorage(getRawPath(src), &fs.GetStoragesArgs{})
 		if e != nil {
 			continue
 		}
@@ -405,7 +406,8 @@ func (d *Alias) getMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	dstStorageMap := make(map[string][]model.Obj)
 	allocatingDst := make(map[model.Obj]struct{})
 	for _, o := range dstObjs {
-		storage, e := fs.GetStorage(o.GetPath(), &fs.GetStoragesArgs{})
+		rawPath := getRawPath(o)
+		storage, e := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
 		if e != nil {
 			return nil, nil, errors.WithMessagef(e, "cannot move to virtual path [%s]", o.GetPath())
 		}
@@ -416,7 +418,7 @@ func (d *Alias) getMoveObjs(ctx context.Context, srcObj, dstDir model.Obj) (Bala
 	srcObjs := make(BalancedObjs, 0, len(tmpSrcObjs))
 	restSrcObjs := make(BalancedObjs, 0, len(tmpSrcObjs)-len(dstObjs))
 	for _, src := range tmpSrcObjs {
-		storage, e := fs.GetStorage(src.GetPath(), &fs.GetStoragesArgs{})
+		storage, e := fs.GetStorage(getRawPath(src), &fs.GetStoragesArgs{})
 		if e != nil {
 			continue
 		}
@@ -499,7 +501,7 @@ func getAllSort(dirs []model.Obj) model.Sort {
 		if dir == nil {
 			continue
 		}
-		storage, err := fs.GetStorage(dir.GetPath(), &fs.GetStoragesArgs{})
+		storage, err := fs.GetStorage(getRawPath(dir), &fs.GetStoragesArgs{})
 		if err != nil {
 			continue
 		}

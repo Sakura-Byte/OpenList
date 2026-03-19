@@ -128,43 +128,47 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 			// 根目录
 			mask |= model.Locked | model.Virtual
 		}
-		ret := model.Object{
-			Path:     rawPath,
-			Name:     obj.GetName(),
-			Size:     obj.GetSize(),
-			Modified: obj.ModTime(),
-			IsFolder: obj.IsDir(),
-			HashInfo: obj.GetHash(),
-			Mask:     mask,
-		}
-		obj = &ret
+		obj = wrapAliasViewObj(obj, rawPath, d.rawPathToAliasPath(rawPath), mask)
 		if d.ProviderPassThrough && !obj.IsDir() {
 			if storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{}); err == nil {
-				obj = &model.ObjectProvider{
-					Object: ret,
-					Provider: model.Provider{
-						Provider: storage.Config().Name,
-					},
-				}
+				obj = &providerOverlay{Obj: obj, provider: storage.Config().Name}
 			}
 		}
 
-		roots = roots[idx+1:]
-		var objs BalancedObjs
-		if idx > 0 {
-			objs = make(BalancedObjs, 0, len(roots)+2)
-		} else {
-			objs = make(BalancedObjs, 0, len(roots)+1)
+		remainingRoots := roots[idx+1:]
+		remainingObjs := make([]model.Obj, 0, len(remainingRoots))
+		needThumb := !obj.IsDir() && !hasThumb(obj)
+		for _, nextRoot := range remainingRoots {
+			nextRawPath := stdpath.Join(nextRoot, sub)
+			if needThumb {
+				nextObj, err := fs.Get(ctx, nextRawPath, &fs.GetArgs{NoLog: true})
+				if err == nil {
+					nextMask := model.GetObjMask(nextObj) &^ model.Temp
+					if sub == "" {
+						nextMask |= model.Locked | model.Virtual
+					}
+					nextObj = wrapAliasViewObj(nextObj, nextRawPath, d.rawPathToAliasPath(nextRawPath), nextMask)
+					if d.ProviderPassThrough && !nextObj.IsDir() {
+						if storage, err := fs.GetStorage(nextRawPath, &fs.GetStoragesArgs{}); err == nil {
+							nextObj = &providerOverlay{Obj: nextObj, provider: storage.Config().Name}
+						}
+					}
+					remainingObjs = append(remainingObjs, nextObj)
+					obj = borrowThumb(obj, nextObj)
+					needThumb = !hasThumb(obj)
+					continue
+				}
+			}
+			remainingObjs = append(remainingObjs, &tempObj{model.Object{Path: nextRawPath}})
 		}
+
+		var objs BalancedObjs
+		objs = make(BalancedObjs, 0, len(remainingObjs)+2)
 		objs = append(objs, obj)
 		if idx > 0 {
 			objs = append(objs, nil)
 		}
-		for _, d := range roots {
-			objs = append(objs, &tempObj{model.Object{
-				Path: stdpath.Join(d, sub),
-			}})
-		}
+		objs = append(objs, remainingObjs...)
 		return objs, nil
 	}
 	return nil, errs.ObjectNotFound
@@ -183,7 +187,7 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		if dir == nil {
 			continue
 		}
-		dirPath := dir.GetPath()
+		dirPath := getRawPath(dir)
 		tmp, err := fs.List(ctx, dirPath, &fs.ListArgs{
 			NoLog:              true,
 			Refresh:            args.Refresh,
@@ -194,34 +198,12 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		}
 		for _, obj := range tmp {
 			name := obj.GetName()
-			if _, exists := objMap[name]; exists {
-				continue
-			}
 			mask := model.GetObjMask(obj) &^ model.Temp
-			objRes := model.Object{
-				Name:     name,
-				Path:     stdpath.Join(dirPath, name),
-				Size:     obj.GetSize(),
-				Modified: obj.ModTime(),
-				IsFolder: obj.IsDir(),
-				Mask:     mask,
-			}
-			var objRet model.Obj
-			if thumb, ok := model.GetThumb(obj); ok {
-				objRet = &model.ObjThumb{
-					Object: objRes,
-					Thumbnail: model.Thumbnail{
-						Thumbnail: thumb,
-					},
-				}
-			} else {
-				objRet = &objRes
-			}
-			if details, ok := model.GetStorageDetails(obj); ok {
-				objRet = &model.ObjStorageDetails{
-					Obj:            objRet,
-					StorageDetails: details,
-				}
+			rawPath := stdpath.Join(dirPath, name)
+			objRet := wrapAliasViewObj(obj, rawPath, d.rawPathToAliasPath(rawPath), mask)
+			if existing, exists := objMap[name]; exists {
+				objMap[name] = borrowThumb(existing, objRet)
+				continue
 			}
 			objMap[name] = objRet
 		}
@@ -400,7 +382,7 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		linkClosers := make([]io.Closer, 0, len(files))
 		rrf := make([]model.RangeReaderIF, 0, len(files))
 		for _, f := range files {
-			link, fi, err := d.link(ctx, f.GetPath(), args)
+			link, fi, err := d.link(ctx, getRawPath(f), args)
 			if err != nil {
 				continue
 			}
@@ -448,15 +430,16 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		if f == nil {
 			continue
 		}
-		link, fi, err = d.link(ctx, f.GetPath(), args)
+		rawPath := getRawPath(f)
+		link, fi, err = d.link(ctx, rawPath, args)
 		if err == nil {
 			if link == nil {
 				// 重定向且需要通过代理
 				return &model.Link{
 					URL: fmt.Sprintf("%s/p%s?sign=%s",
 						common.GetApiUrl(ctx),
-						utils.EncodePath(f.GetPath(), true),
-						sign.Sign(f.GetPath())),
+						utils.EncodePath(rawPath, true),
+						sign.Sign(rawPath)),
 				}, nil
 			}
 			break
@@ -486,7 +469,7 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 func (d *Alias) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
 	// Other 不应负载均衡，这是因为前端是否调用 /fs/other 的判断条件是返回的 provider 的值
 	// 而 ProviderPassThrough 开启时，返回的 provider 固定为第一个 obj 的后端驱动
-	storage, actualPath, err := op.GetStorageAndActualPath(args.Obj.GetPath())
+	storage, actualPath, err := op.GetStorageAndActualPath(getRawPath(args.Obj))
 	if err != nil {
 		return nil, err
 	}
@@ -501,7 +484,7 @@ func (d *Alias) MakeDir(ctx context.Context, parentDir model.Obj, dirName string
 	objs, err := d.getWriteObjs(ctx, parentDir)
 	if err == nil {
 		for _, obj := range objs {
-			err = errors.Join(err, fs.MakeDir(ctx, stdpath.Join(obj.GetPath(), dirName)))
+			err = errors.Join(err, fs.MakeDir(ctx, stdpath.Join(getRawPath(obj), dirName)))
 		}
 	}
 	return err
@@ -512,12 +495,12 @@ func (d *Alias) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if err == nil {
 		for i, dst := range dsts {
 			src := srcs[i]
-			_, e := fs.Move(ctx, src.GetPath(), dst.GetPath())
+			_, e := fs.Move(ctx, getRawPath(src), getRawPath(dst))
 			err = errors.Join(err, e)
 		}
 		srcs = srcs[len(dsts):]
 		for _, src := range srcs {
-			e := fs.Remove(ctx, src.GetPath())
+			e := fs.Remove(ctx, getRawPath(src))
 			err = errors.Join(err, e)
 		}
 	}
@@ -528,7 +511,7 @@ func (d *Alias) Rename(ctx context.Context, srcObj model.Obj, newName string) er
 	objs, err := d.getWriteObjs(ctx, srcObj)
 	if err == nil {
 		for _, obj := range objs {
-			err = errors.Join(err, fs.Rename(ctx, obj.GetPath(), newName))
+			err = errors.Join(err, fs.Rename(ctx, getRawPath(obj), newName))
 		}
 	}
 	return err
@@ -539,7 +522,7 @@ func (d *Alias) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if err == nil {
 		for i, src := range srcs {
 			dst := dsts[i]
-			_, e := fs.Copy(ctx, src.GetPath(), dst.GetPath())
+			_, e := fs.Copy(ctx, getRawPath(src), getRawPath(dst))
 			err = errors.Join(err, e)
 		}
 	}
@@ -550,7 +533,7 @@ func (d *Alias) Remove(ctx context.Context, obj model.Obj) error {
 	objs, err := d.getWriteObjs(ctx, obj)
 	if err == nil {
 		for _, obj := range objs {
-			err = errors.Join(err, fs.Remove(ctx, obj.GetPath()))
+			err = errors.Join(err, fs.Remove(ctx, getRawPath(obj)))
 		}
 	}
 	return err
@@ -560,7 +543,7 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 	objs, err := d.getPutObjs(ctx, dstDir)
 	if err == nil {
 		if len(objs) == 1 {
-			storage, reqActualPath, err := op.GetStorageAndActualPath(objs.GetPath())
+			storage, reqActualPath, err := op.GetStorageAndActualPath(getRawPath(objs))
 			if err != nil {
 				return err
 			}
@@ -577,7 +560,7 @@ func (d *Alias) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer,
 			count := float64(len(objs) + 1)
 			up(100 / count)
 			for i, obj := range objs {
-				err = errors.Join(err, fs.PutDirectly(ctx, obj.GetPath(), &stream.FileStream{
+				err = errors.Join(err, fs.PutDirectly(ctx, getRawPath(obj), &stream.FileStream{
 					Obj:      s,
 					Mimetype: s.GetMimetype(),
 					Reader:   file,
@@ -598,7 +581,7 @@ func (d *Alias) PutURL(ctx context.Context, dstDir model.Obj, name, url string) 
 	objs, err := d.getPutObjs(ctx, dstDir)
 	if err == nil {
 		for _, obj := range objs {
-			err = errors.Join(err, fs.PutURL(ctx, obj.GetPath(), name, url))
+			err = errors.Join(err, fs.PutURL(ctx, getRawPath(obj), name, url))
 		}
 		return err
 	}
@@ -661,7 +644,7 @@ func (d *Alias) ArchiveDecompress(ctx context.Context, srcObj, dstDir model.Obj,
 	if err == nil {
 		for i, src := range srcs {
 			dst := dsts[i]
-			_, e := fs.ArchiveDecompress(ctx, src.GetPath(), dst.GetPath(), args)
+			_, e := fs.ArchiveDecompress(ctx, getRawPath(src), getRawPath(dst), args)
 			err = errors.Join(err, e)
 		}
 	}
