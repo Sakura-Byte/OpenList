@@ -201,6 +201,9 @@ func admin(g *gin.RouterGroup) {
 	scan.POST("/start", handles.StartManualScan)
 	scan.POST("/stop", handles.StopManualScan)
 	scan.GET("/progress", handles.GetManualScanProgress)
+
+	updateSite := g.Group("/update_site")
+	updateSite.POST("/list_recursive", handles.UpdateSiteListRecursive)
 }
 
 func fsAndShare(g *gin.RouterGroup) {

@@ -16,28 +16,42 @@ import (
 
 type WalkStorageBatchFunc func(parent string, objs []model.Obj) error
 
+type WalkStorageStats struct {
+	UsedListR  bool `json:"used_listr"`
+	FellBack   bool `json:"fell_back"`
+	BatchCount int  `json:"batch_count"`
+	EntryCount int  `json:"entry_count"`
+}
+
 // WalkStorageRecursive recursively traverses storage from actualPath.
 // When useListR is true and the driver supports ListR, it will use ListR first
 // and transparently fall back to recursive List on errors.
 func WalkStorageRecursive(ctx context.Context, storage driver.Driver, actualPath string, maxDepth int,
 	args model.ListArgs, useListR bool, limiter *rate.Limiter, onBatch WalkStorageBatchFunc) error {
+	_, err := WalkStorageRecursiveWithStats(ctx, storage, actualPath, maxDepth, args, useListR, limiter, onBatch)
+	return err
+}
+
+func WalkStorageRecursiveWithStats(ctx context.Context, storage driver.Driver, actualPath string, maxDepth int,
+	args model.ListArgs, useListR bool, limiter *rate.Limiter, onBatch WalkStorageBatchFunc) (WalkStorageStats, error) {
+	stats := WalkStorageStats{}
 	actualPath = utils.FixAndCleanPath(actualPath)
 	if maxDepth == 0 {
-		return nil
+		return stats, nil
 	}
 
 	if !useListR {
-		return walkStorageRecursiveByList(ctx, storage, actualPath, maxDepth, args, limiter, onBatch)
+		return walkStorageRecursiveByListWithStats(ctx, storage, actualPath, maxDepth, args, limiter, onBatch)
 	}
 
 	listr, ok := storage.(driver.ListRer)
 	if !ok {
-		return walkStorageRecursiveByList(ctx, storage, actualPath, maxDepth, args, limiter, onBatch)
+		return walkStorageRecursiveByListWithStats(ctx, storage, actualPath, maxDepth, args, limiter, onBatch)
 	}
 
 	dir, err := GetUnwrap(ctx, storage, actualPath)
 	if err != nil {
-		return errors.WithMessagef(err, "failed get dir for ListR [%s]%s", storage.GetStorage().MountPath, actualPath)
+		return stats, errors.WithMessagef(err, "failed get dir for ListR [%s]%s", storage.GetStorage().MountPath, actualPath)
 	}
 	if raw := model.UnwrapObj(dir); raw.GetPath() == "" {
 		if setter, ok := raw.(model.SetPath); ok {
@@ -46,12 +60,13 @@ func WalkStorageRecursive(ctx context.Context, storage driver.Driver, actualPath
 	}
 
 	startTime := time.Now()
-	batchCount := 0
+	stats.UsedListR = true
 	err = listr.ListR(ctx, dir, args, maxDepth, func(parent string, entries []model.Obj) error {
 		if len(entries) == 0 {
 			return nil
 		}
-		batchCount++
+		stats.BatchCount++
+		stats.EntryCount += len(entries)
 		if limiter != nil {
 			if err := limiter.Wait(ctx); err != nil {
 				return err
@@ -80,37 +95,50 @@ func WalkStorageRecursive(ctx context.Context, storage driver.Driver, actualPath
 	elapsed := time.Since(startTime)
 	if err == nil {
 		log.Debugf("ListR walk done, storage=[%s]%s, batches=%d, elapsed=%s",
-			storage.GetStorage().MountPath, actualPath, batchCount, elapsed)
-		return nil
+			storage.GetStorage().MountPath, actualPath, stats.BatchCount, elapsed)
+		return stats, nil
 	}
 	if errors.Is(err, context.Canceled) || utils.IsCanceled(ctx) {
 		log.Debugf("ListR walk canceled, storage=[%s]%s, batches=%d, elapsed=%s",
-			storage.GetStorage().MountPath, actualPath, batchCount, elapsed)
-		return err
+			storage.GetStorage().MountPath, actualPath, stats.BatchCount, elapsed)
+		return stats, err
 	}
 
 	log.Debugf("ListR walk failed, storage=[%s]%s, batches=%d, elapsed=%s",
-		storage.GetStorage().MountPath, actualPath, batchCount, elapsed)
+		storage.GetStorage().MountPath, actualPath, stats.BatchCount, elapsed)
 	log.Warnf("ListR fallback to recursive List, storage=[%s]%s, err=%+v", storage.GetStorage().MountPath, actualPath, err)
-	return walkStorageRecursiveByList(ctx, storage, actualPath, maxDepth, args, limiter, onBatch)
+	fallbackStats, fallbackErr := walkStorageRecursiveByListWithStats(ctx, storage, actualPath, maxDepth, args, limiter, onBatch)
+	stats.FellBack = true
+	stats.BatchCount += fallbackStats.BatchCount
+	stats.EntryCount += fallbackStats.EntryCount
+	return stats, fallbackErr
 }
 
 func walkStorageRecursiveByList(ctx context.Context, storage driver.Driver, actualPath string, maxDepth int,
 	args model.ListArgs, limiter *rate.Limiter, onBatch WalkStorageBatchFunc) error {
+	_, err := walkStorageRecursiveByListWithStats(ctx, storage, actualPath, maxDepth, args, limiter, onBatch)
+	return err
+}
+
+func walkStorageRecursiveByListWithStats(ctx context.Context, storage driver.Driver, actualPath string, maxDepth int,
+	args model.ListArgs, limiter *rate.Limiter, onBatch WalkStorageBatchFunc) (WalkStorageStats, error) {
+	stats := WalkStorageStats{}
 	if maxDepth == 0 {
-		return nil
+		return stats, nil
 	}
 	objs, err := walkStorageListWithRetry(ctx, storage, actualPath, args)
 	if err != nil {
-		return err
+		return stats, err
 	}
 	if onBatch != nil && len(objs) > 0 {
+		stats.BatchCount++
+		stats.EntryCount += len(objs)
 		if err = onBatch(actualPath, objs); err != nil {
-			return err
+			return stats, err
 		}
 	}
 	if maxDepth == 1 {
-		return nil
+		return stats, nil
 	}
 
 	nextDepth := maxDepth - 1
@@ -123,15 +151,18 @@ func walkStorageRecursiveByList(ctx context.Context, storage driver.Driver, actu
 		}
 		if limiter != nil {
 			if err = limiter.Wait(ctx); err != nil {
-				return err
+				return stats, err
 			}
 		}
 		nextPath := stdpath.Join(actualPath, obj.GetName())
-		if err = walkStorageRecursiveByList(ctx, storage, nextPath, nextDepth, args, limiter, onBatch); err != nil {
-			return err
+		childStats, childErr := walkStorageRecursiveByListWithStats(ctx, storage, nextPath, nextDepth, args, limiter, onBatch)
+		stats.BatchCount += childStats.BatchCount
+		stats.EntryCount += childStats.EntryCount
+		if childErr != nil {
+			return stats, childErr
 		}
 	}
-	return nil
+	return stats, nil
 }
 
 func walkStorageListWithRetry(ctx context.Context, storage driver.Driver, actualPath string, args model.ListArgs) ([]model.Obj, error) {
