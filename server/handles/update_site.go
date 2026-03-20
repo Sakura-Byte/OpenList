@@ -2,10 +2,11 @@ package handles
 
 import (
 	"errors"
+	"net/http"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
@@ -14,7 +15,8 @@ type UpdateSiteRecursiveListReq struct {
 	Path         string `json:"path" form:"path"`
 	MaxDepth     int    `json:"max_depth" form:"max_depth"`
 	IncludeThumb *bool  `json:"include_thumb" form:"include_thumb"`
-	BatchLimit   int    `json:"batch_limit" form:"batch_limit"`
+	PageLimit    int    `json:"page_limit" form:"page_limit"`
+	Cursor       string `json:"cursor" form:"cursor"`
 }
 
 type UpdateSiteRecursiveEntryResp struct {
@@ -32,15 +34,14 @@ type UpdateSiteRecursiveBatchResp struct {
 
 type UpdateSiteRecursiveListResp struct {
 	Batches []UpdateSiteRecursiveBatchResp `json:"batches"`
-	Stats   op.WalkStorageStats           `json:"stats"`
+	Cursor  string                         `json:"cursor,omitempty"`
+	Done    bool                           `json:"done"`
+	Stats   updatesite.ScanPageStats       `json:"stats"`
 	Meta    struct {
-		Truncated    bool `json:"truncated"`
 		IncludeThumb bool `json:"include_thumb"`
-		BatchLimit   int  `json:"batch_limit"`
+		PageLimit    int  `json:"page_limit"`
 	} `json:"meta"`
 }
-
-var errUpdateSiteBatchLimit = errors.New("update_site batch limit reached")
 
 func UpdateSiteListRecursive(c *gin.Context) {
 	var req UpdateSiteRecursiveListReq
@@ -59,21 +60,43 @@ func UpdateSiteListRecursive(c *gin.Context) {
 		includeThumb = *req.IncludeThumb
 	}
 
-	resp := UpdateSiteRecursiveListResp{
-		Batches: make([]UpdateSiteRecursiveBatchResp, 0, 64),
+	page, err := updatesite.ScanPublicPathPage(c.Request.Context(), updatesite.ScanPageRequest{
+		Path:         req.Path,
+		MaxDepth:     req.MaxDepth,
+		IncludeThumb: includeThumb,
+		PageLimit:    req.PageLimit,
+		Cursor:       req.Cursor,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, updatesite.ErrScanCursorExpired):
+			c.JSON(http.StatusGone, common.Resp[interface{}]{
+				Code:    http.StatusGone,
+				Message: err.Error(),
+				Data:    nil,
+			})
+		case errors.Is(err, updatesite.ErrScanCursorMismatch):
+			common.ErrorResp(c, err, http.StatusBadRequest)
+		default:
+			common.ErrorResp(c, err, http.StatusInternalServerError)
+		}
+		return
 	}
-	resp.Meta.IncludeThumb = includeThumb
-	resp.Meta.BatchLimit = req.BatchLimit
-	stats, err := op.WalkPublicRecursiveWithStats(c.Request.Context(), req.Path, req.MaxDepth, true, nil, func(parent string, objs []model.Obj) error {
-		if req.BatchLimit > 0 && len(resp.Batches) >= req.BatchLimit {
-			resp.Meta.Truncated = true
-			return errUpdateSiteBatchLimit
-		}
+
+	resp := UpdateSiteRecursiveListResp{
+		Batches: make([]UpdateSiteRecursiveBatchResp, 0, len(page.Batches)),
+		Cursor:  page.Cursor,
+		Done:    page.Done,
+		Stats:   page.Stats,
+	}
+	resp.Meta.IncludeThumb = page.Meta.IncludeThumb
+	resp.Meta.PageLimit = page.Meta.PageLimit
+	for _, pageBatch := range page.Batches {
 		batch := UpdateSiteRecursiveBatchResp{
-			Parent:  parent,
-			Content: make([]UpdateSiteRecursiveEntryResp, 0, len(objs)),
+			Parent:  pageBatch.ParentPath,
+			Content: make([]UpdateSiteRecursiveEntryResp, 0, len(pageBatch.Nodes)),
 		}
-		for _, obj := range objs {
+		for _, obj := range pageBatch.Nodes {
 			thumb := ""
 			if includeThumb {
 				thumb, _ = model.GetThumb(obj)
@@ -87,12 +110,6 @@ func UpdateSiteListRecursive(c *gin.Context) {
 			})
 		}
 		resp.Batches = append(resp.Batches, batch)
-		return nil
-	})
-	resp.Stats = stats
-	if err != nil && !errors.Is(err, errUpdateSiteBatchLimit) {
-		common.ErrorResp(c, err, 500)
-		return
 	}
 	common.SuccessResp(c, resp)
 }
