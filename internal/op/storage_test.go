@@ -2,8 +2,11 @@ package op_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
+	_ "github.com/OpenListTeam/OpenList/v4/drivers"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -14,16 +17,35 @@ import (
 	"gorm.io/gorm"
 )
 
-func init() {
-	dB, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+func setupStorageTestEnv(t *testing.T) {
+	t.Helper()
+
+	prevConf := conf.Conf
+	dsn := fmt.Sprintf("file:%s-%d?mode=memory&cache=shared", t.Name(), time.Now().UnixNano())
+	dB, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
-		panic("failed to connect database")
+		t.Fatalf("failed to connect database: %v", err)
 	}
+	sqlDB, err := dB.DB()
+	if err != nil {
+		t.Fatalf("failed to get sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 	conf.Conf = conf.DefaultConfig("data")
 	db.Init(dB)
+	if err := db.GetDb().Exec("DELETE FROM storages").Error; err != nil {
+		t.Fatalf("failed to reset storages table: %v", err)
+	}
+	t.Cleanup(func() {
+		conf.Conf = prevConf
+		_ = sqlDB.Close()
+	})
 }
 
 func TestCreateStorage(t *testing.T) {
+	setupStorageTestEnv(t)
+
 	var storages = []struct {
 		storage model.Storage
 		isErr   bool
@@ -34,17 +56,22 @@ func TestCreateStorage(t *testing.T) {
 	}
 	for _, storage := range storages {
 		_, err := op.CreateStorage(context.Background(), storage.storage)
-		if err != nil {
-			if !storage.isErr {
-				t.Errorf("failed to create storage: %+v", err)
+		if storage.isErr {
+			if err == nil {
+				t.Errorf("expected create storage to fail for mount %s", storage.storage.MountPath)
 			} else {
 				t.Logf("expect failed to create storage: %+v", err)
 			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("failed to create storage: %+v", err)
 		}
 	}
 }
 
 func TestGetStorageVirtualFilesByPath(t *testing.T) {
+	setupStorageTestEnv(t)
 	setupStorages(t)
 	virtualFiles := op.GetStorageVirtualFilesByPath("/a")
 	var names []string
@@ -60,6 +87,8 @@ func TestGetStorageVirtualFilesByPath(t *testing.T) {
 }
 
 func TestGetBalancedStorage(t *testing.T) {
+	setupStorageTestEnv(t)
+	setupStorages(t)
 	set := mapset.NewSet[string]()
 	for i := 0; i < 5; i++ {
 		storage := op.GetBalancedStorage("/a/d/e1")
@@ -72,6 +101,8 @@ func TestGetBalancedStorage(t *testing.T) {
 }
 
 func setupStorages(t *testing.T) {
+	t.Helper()
+
 	var storages = []model.Storage{
 		{Driver: "Local", MountPath: "/a/b", Order: 0, Addition: `{"root_folder_path":"."}`},
 		{Driver: "Local", MountPath: "/adc", Order: 0, Addition: `{"root_folder_path":"."}`},

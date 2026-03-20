@@ -25,20 +25,71 @@ func WalkPublicRecursiveWithStats(ctx context.Context, rawPath string, maxDepth 
 		return stats, nil
 	}
 
+	virtualFiles := GetStorageVirtualFilesByPath(rawPath)
 	storage, actualPath, err := GetStorageAndActualPath(rawPath)
 	if err == nil {
-		return WalkStorageRecursiveWithStats(ctx, storage, actualPath, maxDepth, model.ListArgs{Refresh: true}, useListR, limiter, func(parent string, objs []model.Obj) error {
-			if onBatch == nil {
-				return nil
+		if len(virtualFiles) == 0 {
+			return WalkStorageRecursiveWithStats(ctx, storage, actualPath, maxDepth, model.ListArgs{Refresh: true}, useListR, limiter, func(parent string, objs []model.Obj) error {
+				if onBatch == nil {
+					return nil
+				}
+				return onBatch(utils.GetFullPath(storage.GetStorage().MountPath, parent), objs)
+			})
+		}
+		items, listErr := List(ctx, storage, actualPath, model.ListArgs{Refresh: true})
+		if listErr != nil && len(virtualFiles) == 0 {
+			return stats, listErr
+		}
+		merged := model.NewObjMerge().Merge(items, virtualFiles...)
+		if len(merged) == 0 {
+			if listErr != nil {
+				return stats, listErr
 			}
-			return onBatch(utils.GetFullPath(storage.GetStorage().MountPath, parent), objs)
-		})
+			return stats, errors.WithStack(errs.ObjectNotFound)
+		}
+		if onBatch != nil {
+			stats.BatchCount++
+			stats.EntryCount += len(merged)
+			if err := onBatch(rawPath, merged); err != nil {
+				return stats, err
+			}
+		}
+		if maxDepth == 1 {
+			return stats, nil
+		}
+
+		nextDepth := maxDepth - 1
+		if maxDepth < 0 {
+			nextDepth = -1
+		}
+		for _, obj := range merged {
+			if !obj.IsDir() {
+				continue
+			}
+			if limiter != nil {
+				if err := limiter.Wait(ctx); err != nil {
+					return stats, err
+				}
+			}
+			childStats, childErr := WalkPublicRecursiveWithStats(ctx, stdpath.Join(rawPath, obj.GetName()), nextDepth, useListR, limiter, onBatch)
+			stats.BatchCount += childStats.BatchCount
+			stats.EntryCount += childStats.EntryCount
+			if childStats.UsedListR {
+				stats.UsedListR = true
+			}
+			if childStats.FellBack {
+				stats.FellBack = true
+			}
+			if childErr != nil {
+				return stats, childErr
+			}
+		}
+		return stats, nil
 	}
 	if !errors.Is(err, errs.StorageNotFound) {
 		return stats, err
 	}
 
-	virtualFiles := GetStorageVirtualFilesByPath(rawPath)
 	if len(virtualFiles) == 0 {
 		return stats, errors.WithStack(errs.ObjectNotFound)
 	}

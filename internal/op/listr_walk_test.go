@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -217,6 +218,12 @@ func TestWalkStorageRecursive_ListRLimiterByBatch(t *testing.T) {
 }
 
 func TestWalkStorageRecursive_ListFallbackRetry(t *testing.T) {
+	prevConf := conf.Conf
+	conf.Conf = conf.DefaultConfig("data")
+	t.Cleanup(func() {
+		conf.Conf = prevConf
+	})
+
 	storage := &fakeListRStorage{
 		Storage:      model.Storage{MountPath: "/fake-listr-retry", CacheExpiration: 30},
 		addition:     driver.RootPath{RootFolderPath: "/"},
