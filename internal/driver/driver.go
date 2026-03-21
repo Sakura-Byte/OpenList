@@ -50,9 +50,16 @@ type UpdateSiteChunk struct {
 	Parent     string
 	Entries    []model.Obj
 	ParentDone bool
+	Debug      *UpdateSiteChunkDebug
 }
 
 type UpdateSiteChunkCallback func(chunk UpdateSiteChunk) error
+
+type UpdateSiteChunkDebug struct {
+	Engine        string `json:"engine"`
+	StorageMount  string `json:"storage_mount,omitempty"`
+	StorageDriver string `json:"storage_driver,omitempty"`
+}
 
 type UpdateSiteListRer interface {
 	// UpdateSiteListR recursively lists entries starting from dir and emits

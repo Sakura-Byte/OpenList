@@ -420,6 +420,7 @@ func (d *Alias) listRForUpdateSiteDsts(ctx context.Context, dsts []string, alias
 				Parent:     aliasParent,
 				Entries:    converted,
 				ParentDone: chunk.ParentDone,
+				Debug:      chunk.Debug,
 			})
 		})
 		if err != nil {

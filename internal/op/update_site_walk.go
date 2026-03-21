@@ -42,6 +42,11 @@ func WalkUpdateSitePublicChunks(ctx context.Context, rawPath string, maxDepth in
 				Parent:     rawPath,
 				Entries:    merged,
 				ParentDone: true,
+				Debug: &driver.UpdateSiteChunkDebug{
+					Engine:        "list",
+					StorageMount:  storage.GetStorage().MountPath,
+					StorageDriver: storage.Config().Name,
+				},
 			}); err != nil {
 				return err
 			}
@@ -59,6 +64,9 @@ func WalkUpdateSitePublicChunks(ctx context.Context, rawPath string, maxDepth in
 			Parent:     rawPath,
 			Entries:    virtualFiles,
 			ParentDone: true,
+			Debug: &driver.UpdateSiteChunkDebug{
+				Engine: "virtual",
+			},
 		}); err != nil {
 			return err
 		}
@@ -101,13 +109,29 @@ func WalkUpdateSiteStorageChunks(ctx context.Context, storage driver.Driver, act
 		}
 	}
 
+	withDebug := func(engine string) driver.UpdateSiteChunkCallback {
+		return func(chunk driver.UpdateSiteChunk) error {
+			if chunk.Debug == nil {
+				chunk.Debug = &driver.UpdateSiteChunkDebug{
+					Engine:        engine,
+					StorageMount:  storage.GetStorage().MountPath,
+					StorageDriver: storage.Config().Name,
+				}
+			}
+			if onChunk == nil {
+				return nil
+			}
+			return onChunk(chunk)
+		}
+	}
+
 	if updater, ok := storage.(driver.UpdateSiteListRer); ok {
-		return updater.ListRForUpdateSite(ctx, dir, args, maxDepth, onChunk)
+		return updater.ListRForUpdateSite(ctx, dir, args, maxDepth, withDebug("update_site_listr"))
 	}
 	if listr, ok := storage.(driver.ListRer); ok {
-		return walkUpdateSiteStorageByListR(ctx, storage, listr, dir, args, maxDepth, onChunk)
+		return walkUpdateSiteStorageByListR(ctx, storage, listr, dir, args, maxDepth, withDebug("listr"))
 	}
-	return walkUpdateSiteStorageByList(ctx, storage, actualPath, args, maxDepth, onChunk)
+	return walkUpdateSiteStorageByList(ctx, storage, actualPath, args, maxDepth, withDebug("list"))
 }
 
 func walkUpdateSiteStorageByListR(ctx context.Context, storage driver.Driver, listr driver.ListRer, dir model.Obj, args model.ListArgs, maxDepth int, onChunk driver.UpdateSiteChunkCallback) error {

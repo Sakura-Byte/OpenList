@@ -31,6 +31,13 @@ type UpdateSiteRecursiveChunkResp struct {
 	Parent  string                         `json:"parent"`
 	Content []UpdateSiteRecursiveEntryResp `json:"content"`
 	Done    bool                           `json:"parent_done"`
+	Debug   *UpdateSiteRecursiveDebugResp  `json:"debug,omitempty"`
+}
+
+type UpdateSiteRecursiveDebugResp struct {
+	Engine        string `json:"engine"`
+	StorageMount  string `json:"storage_mount,omitempty"`
+	StorageDriver string `json:"storage_driver,omitempty"`
 }
 
 type UpdateSiteRecursiveListResp struct {
@@ -97,6 +104,13 @@ func UpdateSiteListRecursive(c *gin.Context) {
 			Parent:  pageChunk.ParentPath,
 			Content: make([]UpdateSiteRecursiveEntryResp, 0, len(pageChunk.Nodes)),
 			Done:    pageChunk.ParentDone,
+		}
+		if pageChunk.Debug != nil {
+			chunk.Debug = &UpdateSiteRecursiveDebugResp{
+				Engine:        pageChunk.Debug.Engine,
+				StorageMount:  pageChunk.Debug.StorageMount,
+				StorageDriver: pageChunk.Debug.StorageDriver,
+			}
 		}
 		for _, obj := range pageChunk.Nodes {
 			thumb := ""

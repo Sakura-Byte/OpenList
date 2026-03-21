@@ -162,6 +162,46 @@ func TestWalkUpdateSitePublicChunks_UsesChildUpdateSiteScannerUnderLocalRootStor
 	}
 }
 
+func TestWalkUpdateSitePublicChunks_DebugShowsEnginePerChunk(t *testing.T) {
+	prepareTestStorages(t)
+
+	root := &fakePlainStorage{
+		Storage:  model.Storage{MountPath: "/", CacheExpiration: 30},
+		addition: driver.RootPath{RootFolderPath: "/"},
+		listMap: map[string][]model.Obj{
+			"/": {newFakeObj("local.txt", false)},
+		},
+	}
+	child := &fakeUpdateSiteStorage{
+		fakeListRStorage: &fakeListRStorage{
+			Storage:  model.Storage{MountPath: "/3D", CacheExpiration: 30},
+			addition: driver.RootPath{RootFolderPath: "/"},
+		},
+		updateSiteChunks: []driver.UpdateSiteChunk{
+			{Parent: "/", Entries: []model.Obj{newFakeObj("Derpixon", true)}, ParentDone: true},
+		},
+	}
+	registerTestStorage(root)
+	registerTestStorage(child)
+
+	got := make([]driver.UpdateSiteChunk, 0, 2)
+	if err := WalkUpdateSitePublicChunks(context.Background(), "/", -1, model.ListArgs{Refresh: true}, func(chunk driver.UpdateSiteChunk) error {
+		got = append(got, chunk)
+		return nil
+	}); err != nil {
+		t.Fatalf("WalkUpdateSitePublicChunks error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(got))
+	}
+	if got[0].Debug == nil || got[0].Debug.Engine != "list" || got[0].Debug.StorageDriver != "FakePlain" {
+		t.Fatalf("unexpected root debug: %+v", got[0].Debug)
+	}
+	if got[1].Debug == nil || got[1].Debug.Engine != "update_site_listr" || got[1].Debug.StorageMount != "/3D" {
+		t.Fatalf("unexpected child debug: %+v", got[1].Debug)
+	}
+}
+
 func TestWalkUpdateSiteStorageChunks_CollapsesGenericListRIntoParentDoneBoundaries(t *testing.T) {
 	storage := &fakeListRStorage{
 		Storage:  model.Storage{MountPath: "/fake", CacheExpiration: 30},

@@ -41,6 +41,7 @@ type ScanPageChunk struct {
 	ParentPath string
 	Nodes      []model.Obj
 	ParentDone bool
+	Debug      *driver.UpdateSiteChunkDebug
 }
 
 type ScanPageStats struct {
@@ -222,6 +223,7 @@ func (s *scanSession) emitChunk(chunk driver.UpdateSiteChunk) error {
 		ParentPath: utils.FixAndCleanPath(chunk.Parent),
 		Nodes:      chunk.Entries,
 		ParentDone: chunk.ParentDone,
+		Debug:      chunk.Debug,
 	}
 	select {
 	case <-s.ctx.Done():
