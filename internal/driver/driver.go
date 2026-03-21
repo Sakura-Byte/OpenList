@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
@@ -46,20 +47,28 @@ type ListRer interface {
 	ListR(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback ListRCallback) error
 }
 
-type UpdateSiteChunk struct {
-	Parent     string
-	Entries    []model.Obj
-	ParentDone bool
-	Debug      *UpdateSiteChunkDebug
-}
-
-type UpdateSiteChunkCallback func(chunk UpdateSiteChunk) error
-
-type UpdateSiteChunkDebug struct {
+type UpdateSiteEntryDebug struct {
 	Engine        string `json:"engine"`
 	StorageMount  string `json:"storage_mount,omitempty"`
 	StorageDriver string `json:"storage_driver,omitempty"`
 }
+
+type UpdateSiteEntry struct {
+	VisiblePath string                `json:"visible_path"`
+	ParentPath  string                `json:"parent_path"`
+	Name        string                `json:"name"`
+	IsDir       bool                  `json:"is_dir"`
+	Size        int64                 `json:"size"`
+	Modified    time.Time             `json:"modified"`
+	Thumb       string                `json:"thumb,omitempty"`
+	Debug       *UpdateSiteEntryDebug `json:"debug,omitempty"`
+}
+
+type UpdateSiteChunk struct {
+	Entries []UpdateSiteEntry
+}
+
+type UpdateSiteChunkCallback func(chunk UpdateSiteChunk) error
 
 type UpdateSiteListRer interface {
 	// UpdateSiteListR recursively lists entries starting from dir and emits

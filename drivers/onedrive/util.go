@@ -342,6 +342,87 @@ func (d *Onedrive) ListRForUpdateSite(ctx context.Context, dir model.Obj, args m
 	if maxDepth == 0 || callback == nil {
 		return nil
 	}
+	startPath := utils.FixAndCleanPath(dir.GetPath())
+	if startPath == "" {
+		startPath = "/"
+	}
+	if utils.PathEqual(startPath, "/") {
+		return d.scanUpdateSiteByDelta(ctx, dir, maxDepth, callback)
+	}
+	return d.scanUpdateSiteByChildren(ctx, dir, maxDepth, callback, "update_site_children")
+}
+
+func (d *Onedrive) scanUpdateSiteByDelta(ctx context.Context, dir model.Obj, maxDepth int, callback driver.UpdateSiteChunkCallback) error {
+	directoryID := dir.GetID()
+	if directoryID == "" {
+		root, err := d.GetFile("/")
+		if err != nil {
+			return err
+		}
+		directoryID = root.Id
+	}
+	if directoryID == "" {
+		return fmt.Errorf("onedrive update-site delta: empty root id")
+	}
+
+	nextLink := d.GetMetaUrl(false, "/") + "/delta?$top=1000&$select=id,name,size,fileSystemInfo,file,parentReference,deleted,remoteItem"
+	idToPath := map[string]string{directoryID: "/"}
+	seenIDs := make(map[string]struct{})
+	sharedDirIDs := make(map[string]struct{})
+	unresolved := make([]File, 0)
+	sharedDirs := make([]model.Obj, 0)
+	for nextLink != "" {
+		if utils.IsCanceled(ctx) {
+			return ctx.Err()
+		}
+		files, err := d.requestDeltaPageWithRetry(ctx, nextLink)
+		if err != nil {
+			return err
+		}
+		unresolved = append(unresolved, compactOnedriveDeltaItemsFirstSeen(files.Value)...)
+		resolved, nextUnresolved, nextSharedDirs, progressed := resolveOnedriveDeltaScanEntries("/", directoryID, unresolved, maxDepth, idToPath, seenIDs, sharedDirIDs)
+		unresolved = nextUnresolved
+		sharedDirs = append(sharedDirs, nextSharedDirs...)
+		if len(resolved) > 0 {
+			if err := callback(driver.UpdateSiteChunk{Entries: resolved}); err != nil {
+				return err
+			}
+		}
+		if !progressed && len(unresolved) > 5000 {
+			return d.scanUpdateSiteByChildren(ctx, dir, maxDepth, callback, "update_site_children")
+		}
+		nextLink = files.NextLink
+	}
+	for {
+		resolved, nextUnresolved, nextSharedDirs, progressed := resolveOnedriveDeltaScanEntries("/", directoryID, unresolved, maxDepth, idToPath, seenIDs, sharedDirIDs)
+		unresolved = nextUnresolved
+		sharedDirs = append(sharedDirs, nextSharedDirs...)
+		if len(resolved) > 0 {
+			if err := callback(driver.UpdateSiteChunk{Entries: resolved}); err != nil {
+				return err
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	for _, sharedDir := range sharedDirs {
+		remainingDepth := -1
+		if maxDepth >= 0 {
+			depth := listRPathDepth("/", sharedDir.GetPath())
+			remainingDepth = maxDepth - depth
+			if remainingDepth <= 0 {
+				continue
+			}
+		}
+		if err := d.scanUpdateSiteByChildren(ctx, sharedDir, remainingDepth, callback, "update_site_children"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *Onedrive) scanUpdateSiteByChildren(ctx context.Context, dir model.Obj, maxDepth int, callback driver.UpdateSiteChunkCallback, engine string) error {
 	type task struct {
 		obj   model.Obj
 		depth int
@@ -364,7 +445,7 @@ func (d *Onedrive) ListRForUpdateSite(ctx context.Context, dir model.Obj, args m
 			if err != nil {
 				return err
 			}
-			entries := make([]model.Obj, 0, len(files.Value))
+			entries := make([]driver.UpdateSiteEntry, 0, len(files.Value))
 			for i := range files.Value {
 				obj := fileToObj(files.Value[i], current.obj.GetID())
 				raw := model.UnwrapObj(obj)
@@ -373,17 +454,27 @@ func (d *Onedrive) ListRForUpdateSite(ctx context.Context, dir model.Obj, args m
 						setter.SetPath(stdpath.Join(parentPath, raw.GetName()))
 					}
 				}
-				entries = append(entries, obj)
+				thumb, _ := model.GetThumb(obj)
+				entries = append(entries, driver.UpdateSiteEntry{
+					VisiblePath: obj.GetPath(),
+					ParentPath:  parentPath,
+					Name:        obj.GetName(),
+					IsDir:       obj.IsDir(),
+					Size:        obj.GetSize(),
+					Modified:    obj.ModTime(),
+					Thumb:       thumb,
+					Debug: &driver.UpdateSiteEntryDebug{
+						Engine: engine,
+					},
+				})
 				if obj.IsDir() {
 					nextDirs = append(nextDirs, obj)
 				}
 			}
-			if err := callback(driver.UpdateSiteChunk{
-				Parent:     parentPath,
-				Entries:    entries,
-				ParentDone: files.NextLink == "",
-			}); err != nil {
-				return err
+			if len(entries) > 0 {
+				if err := callback(driver.UpdateSiteChunk{Entries: entries}); err != nil {
+					return err
+				}
 			}
 			if files.NextLink == "" {
 				break
@@ -456,6 +547,77 @@ func listRPathDepth(basePath, fullPath string) int {
 		return 0
 	}
 	return strings.Count(relPath, "/") + 1
+}
+
+func resolveOnedriveDeltaScanEntries(startPath, directoryID string, items []File, maxDepth int, idToPath map[string]string, seenIDs map[string]struct{}, sharedDirIDs map[string]struct{}) ([]driver.UpdateSiteEntry, []File, []model.Obj, bool) {
+	resolved := make([]driver.UpdateSiteEntry, 0)
+	unresolved := make([]File, 0)
+	sharedDirs := make([]model.Obj, 0)
+	progressed := false
+	for i := range items {
+		item := items[i]
+		if item.Id == "" {
+			continue
+		}
+		if item.Id == directoryID {
+			continue
+		}
+		if _, ok := seenIDs[item.Id]; ok {
+			continue
+		}
+		if item.Deleted != nil {
+			seenIDs[item.Id] = struct{}{}
+			progressed = true
+			continue
+		}
+		parentPath, ok := idToPath[item.ParentReference.Id]
+		if !ok {
+			if parsedPath, parsed := parseOnedriveParentPath(item.ParentReference.Path); parsed &&
+				isWithinOnedriveListRSubtree(startPath, parsedPath) {
+				parentPath = parsedPath
+				idToPath[item.ParentReference.Id] = parsedPath
+				ok = true
+			}
+		}
+		if !ok {
+			unresolved = append(unresolved, item)
+			continue
+		}
+		fullPath := stdpath.Join(parentPath, item.Name)
+		depth := listRPathDepth(startPath, fullPath)
+		if maxDepth >= 0 && depth > maxDepth {
+			seenIDs[item.Id] = struct{}{}
+			progressed = true
+			continue
+		}
+		obj := fileToObj(item, item.ParentReference.Id)
+		obj.Path = fullPath
+		thumb, _ := model.GetThumb(obj)
+		resolved = append(resolved, driver.UpdateSiteEntry{
+			VisiblePath: fullPath,
+			ParentPath:  parentPath,
+			Name:        obj.GetName(),
+			IsDir:       obj.IsDir(),
+			Size:        obj.GetSize(),
+			Modified:    obj.ModTime(),
+			Thumb:       thumb,
+			Debug: &driver.UpdateSiteEntryDebug{
+				Engine: "update_site_delta",
+			},
+		})
+		seenIDs[item.Id] = struct{}{}
+		if item.RemoteItem != nil && item.RemoteItem.Folder != nil && obj.IsDir() {
+			if _, seen := sharedDirIDs[obj.GetID()]; !seen {
+				sharedDirIDs[obj.GetID()] = struct{}{}
+				sharedDirs = append(sharedDirs, obj)
+			}
+		}
+		if obj.IsDir() && (maxDepth < 0 || depth < maxDepth) {
+			idToPath[item.Id] = fullPath
+		}
+		progressed = true
+	}
+	return resolved, unresolved, sharedDirs, progressed
 }
 
 func resolveOnedriveListRItems(startPath, directoryID string, items []File, maxDepth int) (map[string][]model.Obj, []model.Obj) {

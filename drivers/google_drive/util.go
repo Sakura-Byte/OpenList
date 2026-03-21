@@ -676,59 +676,123 @@ func (d *GoogleDrive) ListRForUpdateSite(ctx context.Context, dir model.Obj, arg
 	if rootPath == "" {
 		rootPath = "/"
 	}
-	type task struct {
-		id    string
-		path  string
-		depth int
-	}
-	queue := []task{{id: rootID, path: rootPath, depth: 0}}
+	queue := []googleDriveUpdateSiteTask{{id: rootID, path: rootPath, depth: 0}}
 	for len(queue) > 0 {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
 		}
-		current := queue[0]
-		queue = queue[1:]
+		grouping := d.getListRGrouping()
+		if grouping <= 0 {
+			grouping = listRGrouping
+		}
+		if grouping > len(queue) {
+			grouping = len(queue)
+		}
+		chunk := append([]googleDriveUpdateSiteTask(nil), queue[:grouping]...)
+		queue = queue[grouping:]
+		parentIDs := make([]string, 0, len(chunk))
+		taskByParentID := make(map[string]googleDriveUpdateSiteTask, len(chunk))
+		for i := range chunk {
+			parentIDs = append(parentIDs, chunk[i].id)
+			taskByParentID[chunk[i].id] = chunk[i]
+		}
+		query := buildListRParentsQuery(parentIDs)
 		pageToken := ""
-		nextTasks := make([]task, 0)
-		query := fmt.Sprintf("'%s' in parents and trashed = false", current.id)
+		nextTasks := make([]googleDriveUpdateSiteTask, 0)
+		visited := map[string]struct{}{}
+		for i := range queue {
+			visited[queue[i].id] = struct{}{}
+		}
+		requeuedSingles := false
 		for {
 			resp, err := d.getFilesPageByQuery(query, "", pageToken)
 			if err != nil {
 				return err
 			}
-			entries := make([]model.Obj, 0, len(resp.Files))
-			for i := range resp.Files {
-				obj := fileToObj(resp.Files[i])
-				raw := model.UnwrapObj(obj)
-				if raw.GetPath() == "" {
-					if setter, ok := raw.(model.SetPath); ok {
-						setter.SetPath(stdpath.Join(current.path, raw.GetName()))
-					}
+			if len(parentIDs) > 1 && len(resp.Files) == 0 && pageToken == "" {
+				if d.disableListRGrouping() {
+					log.Debugf("google drive update-site scanner disabled grouping to work around grouped-empty query bug")
 				}
-				entries = append(entries, obj)
-				if obj.IsDir() && (maxDepth < 0 || current.depth+1 < maxDepth) {
-					nextTasks = append(nextTasks, task{
-						id:    obj.GetID(),
-						path:  stdpath.Join(current.path, obj.GetName()),
-						depth: current.depth + 1,
-					})
+				queue = append(chunk, queue...)
+				requeuedSingles = true
+				break
+			}
+			entries, newTasks := mapGoogleDriveUpdateSiteEntries(resp.Files, taskByParentID, maxDepth, visited)
+			if len(entries) > 0 {
+				if err := callback(driver.UpdateSiteChunk{Entries: entries}); err != nil {
+					return err
 				}
 			}
-			if err := callback(driver.UpdateSiteChunk{
-				Parent:     current.path,
-				Entries:    entries,
-				ParentDone: resp.NextPageToken == "",
-			}); err != nil {
-				return err
-			}
+			nextTasks = append(nextTasks, newTasks...)
 			if resp.NextPageToken == "" {
 				break
 			}
 			pageToken = resp.NextPageToken
 		}
+		if requeuedSingles {
+			continue
+		}
 		queue = append(queue, nextTasks...)
 	}
 	return nil
+}
+
+type googleDriveUpdateSiteTask struct {
+	id    string
+	path  string
+	depth int
+}
+
+func mapGoogleDriveUpdateSiteEntries(files []File, taskByParentID map[string]googleDriveUpdateSiteTask, maxDepth int, visited map[string]struct{}) ([]driver.UpdateSiteEntry, []googleDriveUpdateSiteTask) {
+	entries := make([]driver.UpdateSiteEntry, 0, len(files))
+	nextTasks := make([]googleDriveUpdateSiteTask, 0)
+	for i := range files {
+		file := files[i]
+		parents := file.Parents
+		if len(parents) == 0 && len(taskByParentID) == 1 {
+			for parentID := range taskByParentID {
+				parents = []string{parentID}
+			}
+		}
+		for _, parentID := range parents {
+			parentTask, ok := taskByParentID[parentID]
+			if !ok {
+				continue
+			}
+			obj := fileToObj(file)
+			parentPath := parentTask.path
+			fullPath := stdpath.Join(parentPath, obj.GetName())
+			entries = append(entries, driver.UpdateSiteEntry{
+				VisiblePath: fullPath,
+				ParentPath:  parentPath,
+				Name:        obj.GetName(),
+				IsDir:       obj.IsDir(),
+				Size:        obj.GetSize(),
+				Modified:    obj.ModTime(),
+				Thumb:       obj.Thumb(),
+				Debug: &driver.UpdateSiteEntryDebug{
+					Engine: "update_site_grouped_listr",
+				},
+			})
+			if !obj.IsDir() {
+				continue
+			}
+			nextDepth := parentTask.depth + 1
+			if maxDepth >= 0 && nextDepth >= maxDepth {
+				continue
+			}
+			if _, ok := visited[obj.GetID()]; ok {
+				continue
+			}
+			visited[obj.GetID()] = struct{}{}
+			nextTasks = append(nextTasks, googleDriveUpdateSiteTask{
+				id:    obj.GetID(),
+				path:  fullPath,
+				depth: nextDepth,
+			})
+		}
+	}
+	return entries, nextTasks
 }
 
 func mapGoogleDriveListRFiles(files []File, parentIDs []string, taskByParentID map[string]googleDriveListRTask,

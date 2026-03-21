@@ -35,12 +35,12 @@ func TestAliasUpdateSiteScannerTraversesRepeatedBalancedPath(t *testing.T) {
 
 	registerFakeData(backendMount1, &fakeThumbData{
 		updateSiteChunks: []driver.UpdateSiteChunk{
-			{Parent: "/", Entries: []model.Obj{&model.Object{Name: "left"}}, ParentDone: true},
+			{Entries: []driver.UpdateSiteEntry{{VisiblePath: "/left", ParentPath: "/", Name: "left"}}},
 		},
 	})
 	registerFakeData(backendMount2, &fakeThumbData{
 		updateSiteChunks: []driver.UpdateSiteChunk{
-			{Parent: "/", Entries: []model.Obj{&model.Object{Name: "right"}}, ParentDone: true},
+			{Entries: []driver.UpdateSiteEntry{{VisiblePath: "/right", ParentPath: "/", Name: "right"}}},
 		},
 	})
 	t.Cleanup(func() {
@@ -91,7 +91,7 @@ func TestAliasUpdateSiteScannerTraversesRepeatedBalancedPath(t *testing.T) {
 	gotNames := make([]string, 0, 2)
 	if err := aliasDriver.ListRForUpdateSite(context.Background(), root, model.ListArgs{}, -1, func(chunk driver.UpdateSiteChunk) error {
 		for _, entry := range chunk.Entries {
-			gotNames = append(gotNames, entry.GetName())
+			gotNames = append(gotNames, entry.Name)
 		}
 		return nil
 	}); err != nil {

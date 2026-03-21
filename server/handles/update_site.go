@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
@@ -19,33 +18,29 @@ type UpdateSiteRecursiveListReq struct {
 	Cursor       string `json:"cursor" form:"cursor"`
 }
 
-type UpdateSiteRecursiveEntryResp struct {
-	Name     string    `json:"name"`
-	Size     int64     `json:"size"`
-	IsDir    bool      `json:"is_dir"`
-	Modified time.Time `json:"modified"`
-	Thumb    string    `json:"thumb"`
-}
-
-type UpdateSiteRecursiveChunkResp struct {
-	Parent  string                         `json:"parent"`
-	Content []UpdateSiteRecursiveEntryResp `json:"content"`
-	Done    bool                           `json:"parent_done"`
-	Debug   *UpdateSiteRecursiveDebugResp  `json:"debug,omitempty"`
-}
-
-type UpdateSiteRecursiveDebugResp struct {
+type UpdateSiteRecursiveEntryDebugResp struct {
 	Engine        string `json:"engine"`
 	StorageMount  string `json:"storage_mount,omitempty"`
 	StorageDriver string `json:"storage_driver,omitempty"`
 }
 
+type UpdateSiteRecursiveEntryResp struct {
+	VisiblePath string                             `json:"visible_path"`
+	ParentPath  string                             `json:"parent_path"`
+	Name        string                             `json:"name"`
+	Size        int64                              `json:"size"`
+	IsDir       bool                               `json:"is_dir"`
+	Modified    time.Time                          `json:"modified"`
+	Thumb       string                             `json:"thumb"`
+	Debug       *UpdateSiteRecursiveEntryDebugResp `json:"debug,omitempty"`
+}
+
 type UpdateSiteRecursiveListResp struct {
-	Chunks []UpdateSiteRecursiveChunkResp `json:"chunks"`
-	Cursor string                         `json:"cursor,omitempty"`
-	Done   bool                           `json:"done"`
-	Stats  updatesite.ScanPageStats       `json:"stats"`
-	Meta   struct {
+	Entries []UpdateSiteRecursiveEntryResp `json:"entries"`
+	Cursor  string                         `json:"cursor,omitempty"`
+	Done    bool                           `json:"done"`
+	Stats   updatesite.ScanPageStats       `json:"stats"`
+	Meta    struct {
 		IncludeThumb bool `json:"include_thumb"`
 		ChunkLimit   int  `json:"chunk_limit"`
 	} `json:"meta"`
@@ -92,40 +87,33 @@ func UpdateSiteListRecursive(c *gin.Context) {
 	}
 
 	resp := UpdateSiteRecursiveListResp{
-		Chunks: make([]UpdateSiteRecursiveChunkResp, 0, len(page.Chunks)),
-		Cursor: page.Cursor,
-		Done:   page.Done,
-		Stats:  page.Stats,
+		Entries: make([]UpdateSiteRecursiveEntryResp, 0, len(page.Entries)),
+		Cursor:  page.Cursor,
+		Done:    page.Done,
+		Stats:   page.Stats,
 	}
 	resp.Meta.IncludeThumb = page.Meta.IncludeThumb
 	resp.Meta.ChunkLimit = page.Meta.ChunkLimit
-	for _, pageChunk := range page.Chunks {
-		chunk := UpdateSiteRecursiveChunkResp{
-			Parent:  pageChunk.ParentPath,
-			Content: make([]UpdateSiteRecursiveEntryResp, 0, len(pageChunk.Nodes)),
-			Done:    pageChunk.ParentDone,
+	for _, entry := range page.Entries {
+		item := UpdateSiteRecursiveEntryResp{
+			VisiblePath: entry.VisiblePath,
+			ParentPath:  entry.ParentPath,
+			Name:        entry.Name,
+			Size:        entry.Size,
+			IsDir:       entry.IsDir,
+			Modified:    entry.Modified,
 		}
-		if pageChunk.Debug != nil {
-			chunk.Debug = &UpdateSiteRecursiveDebugResp{
-				Engine:        pageChunk.Debug.Engine,
-				StorageMount:  pageChunk.Debug.StorageMount,
-				StorageDriver: pageChunk.Debug.StorageDriver,
+		if includeThumb {
+			item.Thumb = entry.Thumb
+		}
+		if entry.Debug != nil {
+			item.Debug = &UpdateSiteRecursiveEntryDebugResp{
+				Engine:        entry.Debug.Engine,
+				StorageMount:  entry.Debug.StorageMount,
+				StorageDriver: entry.Debug.StorageDriver,
 			}
 		}
-		for _, obj := range pageChunk.Nodes {
-			thumb := ""
-			if includeThumb {
-				thumb, _ = model.GetThumb(obj)
-			}
-			chunk.Content = append(chunk.Content, UpdateSiteRecursiveEntryResp{
-				Name:     obj.GetName(),
-				Size:     obj.GetSize(),
-				IsDir:    obj.IsDir(),
-				Modified: obj.ModTime(),
-				Thumb:    thumb,
-			})
-		}
-		resp.Chunks = append(resp.Chunks, chunk)
+		resp.Entries = append(resp.Entries, item)
 	}
 	common.SuccessResp(c, resp)
 }

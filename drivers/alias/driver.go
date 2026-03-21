@@ -336,18 +336,23 @@ func (d *Alias) ListRForUpdateSite(ctx context.Context, dir model.Obj, args mode
 		path = "/"
 	}
 	if utils.PathEqual(path, "/") && len(d.rootOrder) > 1 {
-		rootEntries := make([]model.Obj, 0, len(d.rootOrder))
+		rootEntries := make([]driver.UpdateSiteEntry, 0, len(d.rootOrder))
 		for _, k := range d.rootOrder {
-			rootEntries = append(rootEntries, &model.Object{
-				Name:     k,
-				IsFolder: true,
-				Modified: d.Modified,
+			rootEntries = append(rootEntries, driver.UpdateSiteEntry{
+				VisiblePath: "/" + k,
+				ParentPath:  "/",
+				Name:        k,
+				IsDir:       true,
+				Modified:    d.Modified,
+				Debug: &driver.UpdateSiteEntryDebug{
+					Engine:        "virtual",
+					StorageMount:  d.GetStorage().MountPath,
+					StorageDriver: d.Config().Name,
+				},
 			})
 		}
 		if err := callback(driver.UpdateSiteChunk{
-			Parent:     "/",
-			Entries:    rootEntries,
-			ParentDone: true,
+			Entries: rootEntries,
 		}); err != nil {
 			return err
 		}
@@ -388,47 +393,56 @@ func (d *Alias) listRForUpdateSiteDsts(ctx context.Context, dsts []string, alias
 	args model.ListArgs, maxDepth int, callback driver.UpdateSiteChunkCallback) error {
 	var lastErr error
 	anyChunkSent := false
+	seenDst := make(map[string]struct{}, len(dsts))
 	for _, dst := range dsts {
+		if _, ok := seenDst[dst]; ok {
+			continue
+		}
+		seenDst[dst] = struct{}{}
 		rawPath := stdpath.Join(dst, sub)
-		storage, actualPath, err := op.GetStorageAndActualPath(rawPath)
+		storages, err := op.GetStoragesAndActualPath(rawPath)
 		if err != nil {
 			log.Warnf("alias update-site ListR: failed to resolve storage for %s: %v", rawPath, err)
 			lastErr = err
 			continue
 		}
-		err = op.WalkUpdateSiteStorageChunks(ctx, storage, actualPath, maxDepth, args, func(chunk driver.UpdateSiteChunk) error {
-			anyChunkSent = true
-			fullParent := utils.GetFullPath(utils.GetActualMountPath(storage.GetStorage().MountPath), chunk.Parent)
-			subParent := strings.TrimPrefix(fullParent, dst)
-			if subParent == "" {
-				subParent = "/"
-			}
-			aliasParent := stdpath.Join(aliasPrefix, subParent)
-			if aliasParent == "" {
-				aliasParent = "/"
-			}
-			converted := make([]model.Obj, len(chunk.Entries))
-			for i, obj := range chunk.Entries {
-				converted[i] = &model.Object{
-					Name:     obj.GetName(),
-					Size:     obj.GetSize(),
-					Modified: obj.ModTime(),
-					IsFolder: obj.IsDir(),
+		for _, item := range storages {
+			storage := item.Storage
+			err = op.WalkUpdateSiteStorageChunks(ctx, storage, item.ActualPath, maxDepth, args, func(chunk driver.UpdateSiteChunk) error {
+				anyChunkSent = true
+				entries := make([]driver.UpdateSiteEntry, len(chunk.Entries))
+				for i, entry := range chunk.Entries {
+					fullVisible := utils.GetFullPath(utils.GetActualMountPath(storage.GetStorage().MountPath), entry.VisiblePath)
+					fullParent := utils.GetFullPath(utils.GetActualMountPath(storage.GetStorage().MountPath), entry.ParentPath)
+					subVisible := strings.TrimPrefix(fullVisible, dst)
+					subParent := strings.TrimPrefix(fullParent, dst)
+					if subVisible == "" {
+						subVisible = "/"
+					}
+					if subParent == "" {
+						subParent = "/"
+					}
+					aliasVisible := stdpath.Join(aliasPrefix, subVisible)
+					aliasParent := stdpath.Join(aliasPrefix, subParent)
+					if aliasVisible == "" {
+						aliasVisible = "/"
+					}
+					if aliasParent == "" {
+						aliasParent = "/"
+					}
+					entries[i] = entry
+					entries[i].VisiblePath = aliasVisible
+					entries[i].ParentPath = aliasParent
 				}
-			}
-			return callback(driver.UpdateSiteChunk{
-				Parent:     aliasParent,
-				Entries:    converted,
-				ParentDone: chunk.ParentDone,
-				Debug:      chunk.Debug,
+				return callback(driver.UpdateSiteChunk{Entries: entries})
 			})
-		})
-		if err != nil {
-			if errors.Is(err, context.Canceled) || utils.IsCanceled(ctx) {
-				return err
+			if err != nil {
+				if errors.Is(err, context.Canceled) || utils.IsCanceled(ctx) {
+					return err
+				}
+				log.Warnf("alias update-site ListR for %s via %s failed: %v", rawPath, storage.GetStorage().MountPath, err)
+				lastErr = err
 			}
-			log.Warnf("alias update-site ListR for %s failed: %v", rawPath, err)
-			lastErr = err
 		}
 	}
 	if lastErr != nil && !anyChunkSent {

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/google/uuid"
 )
@@ -37,19 +36,11 @@ type ScanPageRequest struct {
 	Cursor       string
 }
 
-type ScanPageChunk struct {
-	ParentPath string
-	Nodes      []model.Obj
-	ParentDone bool
-	Debug      *driver.UpdateSiteChunkDebug
-}
-
 type ScanPageStats struct {
-	PageCount     int `json:"page_count"`
-	ChunkCount    int `json:"chunk_count"`
-	DirCount      int `json:"dir_count"`
-	EntryCount    int `json:"entry_count"`
-	PendingChunks int `json:"pending_chunks"`
+	PageCount      int `json:"page_count"`
+	DirCount       int `json:"dir_count"`
+	EntryCount     int `json:"entry_count"`
+	PendingEntries int `json:"pending_entries"`
 }
 
 type ScanPageMeta struct {
@@ -58,11 +49,11 @@ type ScanPageMeta struct {
 }
 
 type ScanPageResponse struct {
-	Chunks []ScanPageChunk `json:"chunks"`
-	Cursor string          `json:"cursor,omitempty"`
-	Done   bool            `json:"done"`
-	Stats  ScanPageStats   `json:"stats"`
-	Meta   ScanPageMeta    `json:"meta"`
+	Entries []driver.UpdateSiteEntry `json:"entries"`
+	Cursor  string                   `json:"cursor,omitempty"`
+	Done    bool                     `json:"done"`
+	Stats   ScanPageStats            `json:"stats"`
+	Meta    ScanPageMeta             `json:"meta"`
 }
 
 type scanSession struct {
@@ -76,13 +67,15 @@ type scanSession struct {
 
 	pageMu sync.Mutex
 
-	mu         sync.Mutex
-	stats      ScanPageStats
-	done       bool
-	err        error
-	timer      *time.Timer
-	chunks     chan ScanPageChunk
-	lastAccess time.Time
+	mu            sync.Mutex
+	stats         ScanPageStats
+	done          bool
+	err           error
+	timer         *time.Timer
+	chunks        chan driver.UpdateSiteChunk
+	bufferedCount int
+	leftover      []driver.UpdateSiteEntry
+	lastAccess    time.Time
 }
 
 type scanSessionStore struct {
@@ -91,9 +84,7 @@ type scanSessionStore struct {
 }
 
 func newScanSessionStore() *scanSessionStore {
-	return &scanSessionStore{
-		sessions: make(map[string]*scanSession),
-	}
+	return &scanSessionStore{sessions: make(map[string]*scanSession)}
 }
 
 func SetPublicScanDeps(walk func(ctx context.Context, rawPath string, maxDepth int, onChunk driver.UpdateSiteChunkCallback) error) {
@@ -195,7 +186,7 @@ func newScanSession(cursor string, req ScanPageRequest) *scanSession {
 		includeThumb: req.IncludeThumb,
 		ctx:          ctx,
 		cancel:       cancel,
-		chunks:       make(chan ScanPageChunk, defaultChunkBufferSize),
+		chunks:       make(chan driver.UpdateSiteChunk, defaultChunkBufferSize),
 		lastAccess:   time.Now(),
 	}
 	session.timer = time.AfterFunc(scanCursorTTL, func() {
@@ -206,9 +197,7 @@ func newScanSession(cursor string, req ScanPageRequest) *scanSession {
 
 func (s *scanSession) start() {
 	go func() {
-		err := walkPublicScan(s.ctx, s.path, s.maxDepth, func(chunk driver.UpdateSiteChunk) error {
-			return s.emitChunk(chunk)
-		})
+		err := walkPublicScan(s.ctx, s.path, s.maxDepth, s.emitChunk)
 		s.finish(err)
 	}()
 }
@@ -219,23 +208,19 @@ func (s *scanSession) emitChunk(chunk driver.UpdateSiteChunk) error {
 		return s.ctx.Err()
 	default:
 	}
-	pageChunk := ScanPageChunk{
-		ParentPath: utils.FixAndCleanPath(chunk.Parent),
-		Nodes:      chunk.Entries,
-		ParentDone: chunk.ParentDone,
-		Debug:      chunk.Debug,
-	}
 	select {
 	case <-s.ctx.Done():
 		return s.ctx.Err()
-	case s.chunks <- pageChunk:
+	case s.chunks <- chunk:
 	}
 	s.mu.Lock()
-	s.stats.ChunkCount++
-	s.stats.EntryCount += len(pageChunk.Nodes)
-	if pageChunk.ParentDone {
-		s.stats.DirCount++
+	s.stats.EntryCount += len(chunk.Entries)
+	for _, entry := range chunk.Entries {
+		if entry.IsDir {
+			s.stats.DirCount++
+		}
 	}
+	s.bufferedCount += len(chunk.Entries)
 	s.mu.Unlock()
 	return nil
 }
@@ -278,32 +263,54 @@ func (s *scanSession) nextPage(ctx context.Context, chunkLimit int) (ScanPageRes
 	defer s.pageMu.Unlock()
 
 	s.touch()
-	resp := ScanPageResponse{
-		Chunks: make([]ScanPageChunk, 0, chunkLimit),
+	resp := ScanPageResponse{Entries: make([]driver.UpdateSiteEntry, 0, chunkLimit)}
+
+	appendEntries := func(entries []driver.UpdateSiteEntry) {
+		need := chunkLimit - len(resp.Entries)
+		if need <= 0 || len(entries) == 0 {
+			return
+		}
+		if len(entries) <= need {
+			resp.Entries = append(resp.Entries, entries...)
+			return
+		}
+		resp.Entries = append(resp.Entries, entries[:need]...)
+		s.leftover = append([]driver.UpdateSiteEntry(nil), entries[need:]...)
 	}
 
-	for len(resp.Chunks) < chunkLimit {
-		if len(resp.Chunks) > 0 {
+	for len(resp.Entries) < chunkLimit {
+		if len(s.leftover) > 0 {
+			leftover := s.leftover
+			s.leftover = nil
+			appendEntries(leftover)
+			continue
+		}
+		if len(resp.Entries) > 0 {
 			select {
-			case chunk, ok := <-s.chunks:
+			case batch, ok := <-s.chunks:
 				if !ok {
 					goto finalize
 				}
-				resp.Chunks = append(resp.Chunks, chunk)
+				s.mu.Lock()
+				s.bufferedCount -= len(batch.Entries)
+				s.mu.Unlock()
+				appendEntries(batch.Entries)
 				continue
 			default:
 				goto finalize
 			}
 		}
-
 		select {
 		case <-ctx.Done():
 			return ScanPageResponse{}, ctx.Err()
-		case chunk, ok := <-s.chunks:
+		case batch, ok := <-s.chunks:
 			if !ok {
 				goto finalize
 			}
-			resp.Chunks = append(resp.Chunks, chunk)
+			s.mu.Lock()
+			s.bufferedCount -= len(batch.Entries)
+			s.mu.Unlock()
+			appendEntries(batch.Entries)
 		}
 	}
 
@@ -311,12 +318,12 @@ finalize:
 	s.mu.Lock()
 	s.stats.PageCount++
 	resp.Stats = s.stats
-	resp.Stats.PendingChunks = len(s.chunks)
-	done := s.done && len(s.chunks) == 0
+	resp.Stats.PendingEntries = s.bufferedCount + len(s.leftover)
+	done := s.done && len(s.chunks) == 0 && len(s.leftover) == 0
 	err := s.err
 	s.mu.Unlock()
 
-	if err != nil && len(resp.Chunks) == 0 {
+	if err != nil && len(resp.Entries) == 0 {
 		return ScanPageResponse{}, err
 	}
 	resp.Done = done

@@ -3,6 +3,7 @@ package openlist
 import (
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 )
@@ -168,4 +169,22 @@ type DecompressReq struct {
 	PutIntoNewDir bool     `json:"put_into_new_dir"`
 	SrcDir        string   `json:"src_dir"`
 	Overwrite     bool     `json:"overwrite"`
+}
+
+type UpdateSiteRecursiveListReq struct {
+	Path         string `json:"path"`
+	MaxDepth     int    `json:"max_depth"`
+	IncludeThumb bool   `json:"include_thumb"`
+	ChunkLimit   int    `json:"chunk_limit"`
+	Cursor       string `json:"cursor"`
+}
+
+type UpdateSiteRecursiveListResp struct {
+	Code int `json:"code"`
+	Data struct {
+		Entries []driver.UpdateSiteEntry `json:"entries"`
+		Cursor  string                   `json:"cursor"`
+		Done    bool                     `json:"done"`
+	} `json:"data"`
+	Message string `json:"message"`
 }

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
 
 func TestScanPublicPathPageCursorLifecycle(t *testing.T) {
@@ -19,25 +18,19 @@ func TestScanPublicPathPageCursorLifecycle(t *testing.T) {
 		if maxDepth != -1 {
 			t.Fatalf("unexpected maxDepth: %d", maxDepth)
 		}
-		chunks := []driver.UpdateSiteChunk{
-			{Parent: "/", Entries: []model.Obj{fakeObj("3D", true), fakeObj("ASMR", true)}, ParentDone: true},
-			{Parent: "/3D", Entries: []model.Obj{fakeObj("Alpha", false)}, ParentDone: true},
-			{Parent: "/ASMR", Entries: []model.Obj{}, ParentDone: true},
+		batches := []driver.UpdateSiteChunk{
+			{Entries: []driver.UpdateSiteEntry{{VisiblePath: "/3D", ParentPath: "/", Name: "3D", IsDir: true}, {VisiblePath: "/ASMR", ParentPath: "/", Name: "ASMR", IsDir: true}}},
+			{Entries: []driver.UpdateSiteEntry{{VisiblePath: "/3D/Alpha", ParentPath: "/3D", Name: "Alpha"}}},
 		}
-		for _, chunk := range chunks {
-			if err := onChunk(chunk); err != nil {
+		for _, batch := range batches {
+			if err := onChunk(batch); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 
-	first, err := ScanPublicPathPage(context.Background(), ScanPageRequest{
-		Path:         "/",
-		MaxDepth:     -1,
-		IncludeThumb: true,
-		ChunkLimit:   1,
-	})
+	first, err := ScanPublicPathPage(context.Background(), ScanPageRequest{Path: "/", MaxDepth: -1, IncludeThumb: true, ChunkLimit: 1})
 	if err != nil {
 		t.Fatalf("first page: %v", err)
 	}
@@ -47,54 +40,31 @@ func TestScanPublicPathPageCursorLifecycle(t *testing.T) {
 	if first.Cursor == "" {
 		t.Fatalf("expected cursor")
 	}
-	if first.Stats.PageCount != 1 || first.Stats.ChunkCount != 3 || first.Stats.DirCount != 3 || first.Stats.EntryCount != 3 {
+	if first.Stats.PageCount != 1 || first.Stats.DirCount != 2 || first.Stats.EntryCount != 3 {
 		t.Fatalf("unexpected first stats: %+v", first.Stats)
 	}
-	if got := first.Stats.PendingChunks; got < 0 || got > 2 {
-		t.Fatalf("unexpected pending chunk count: %d", got)
+	if first.Stats.PendingEntries != 2 {
+		t.Fatalf("expected 2 pending entries after first page, got %d", first.Stats.PendingEntries)
 	}
-	if got := first.Chunks[0].ParentPath; got != "/" {
-		t.Fatalf("expected root chunk, got %s", got)
+	if len(first.Entries) != 1 || first.Entries[0].VisiblePath != "/3D" {
+		t.Fatalf("unexpected first entries: %+v", first.Entries)
 	}
 
-	second, err := ScanPublicPathPage(context.Background(), ScanPageRequest{
-		Path:         "/",
-		MaxDepth:     -1,
-		IncludeThumb: true,
-		ChunkLimit:   1,
-		Cursor:       first.Cursor,
-	})
+	second, err := ScanPublicPathPage(context.Background(), ScanPageRequest{Path: "/", MaxDepth: -1, IncludeThumb: true, ChunkLimit: 2, Cursor: first.Cursor})
 	if err != nil {
 		t.Fatalf("second page: %v", err)
 	}
-	if second.Done {
-		t.Fatalf("expected third page")
+	if !second.Done {
+		t.Fatalf("expected completion on second page")
 	}
-	if second.Stats.PageCount != 2 || second.Stats.ChunkCount != 3 || second.Stats.DirCount != 3 || second.Stats.EntryCount != 3 {
+	if second.Stats.PageCount != 2 || second.Stats.PendingEntries != 0 {
 		t.Fatalf("unexpected second stats: %+v", second.Stats)
 	}
-	if got := second.Chunks[0].ParentPath; got != "/3D" {
-		t.Fatalf("expected /3D chunk, got %s", got)
+	if len(second.Entries) != 2 {
+		t.Fatalf("expected 2 entries on second page, got %d", len(second.Entries))
 	}
-
-	third, err := ScanPublicPathPage(context.Background(), ScanPageRequest{
-		Path:         "/",
-		MaxDepth:     -1,
-		IncludeThumb: true,
-		ChunkLimit:   1,
-		Cursor:       second.Cursor,
-	})
-	if err != nil {
-		t.Fatalf("third page: %v", err)
-	}
-	if !third.Done || third.Cursor != "" {
-		t.Fatalf("expected done final page, got done=%v cursor=%q", third.Done, third.Cursor)
-	}
-	if third.Stats.PageCount != 3 || third.Stats.ChunkCount != 3 || third.Stats.DirCount != 3 || third.Stats.EntryCount != 3 || third.Stats.PendingChunks != 0 {
-		t.Fatalf("unexpected third stats: %+v", third.Stats)
-	}
-	if got := third.Chunks[0].ParentPath; got != "/ASMR" {
-		t.Fatalf("expected /ASMR chunk, got %s", got)
+	if second.Entries[0].VisiblePath != "/ASMR" || second.Entries[1].VisiblePath != "/3D/Alpha" {
+		t.Fatalf("unexpected second entries: %+v", second.Entries)
 	}
 }
 
@@ -102,40 +72,23 @@ func TestScanPublicPathPageInvalidCursor(t *testing.T) {
 	withFakeScanWalker(t, func(ctx context.Context, rawPath string, maxDepth int, onChunk driver.UpdateSiteChunkCallback) error {
 		return nil
 	})
-	if _, err := ScanPublicPathPage(context.Background(), ScanPageRequest{
-		Path:         "/",
-		MaxDepth:     -1,
-		IncludeThumb: true,
-		ChunkLimit:   1,
-		Cursor:       "missing",
-	}); !errors.Is(err, ErrScanCursorExpired) {
+	if _, err := ScanPublicPathPage(context.Background(), ScanPageRequest{Path: "/", MaxDepth: -1, IncludeThumb: true, ChunkLimit: 1, Cursor: "missing"}); !errors.Is(err, ErrScanCursorExpired) {
 		t.Fatalf("expected ErrScanCursorExpired, got %v", err)
 	}
 }
 
 func TestScanPublicPathPageCursorMismatch(t *testing.T) {
 	withFakeScanWalker(t, func(ctx context.Context, rawPath string, maxDepth int, onChunk driver.UpdateSiteChunkCallback) error {
-		if err := onChunk(driver.UpdateSiteChunk{Parent: "/", ParentDone: true}); err != nil {
+		if err := onChunk(driver.UpdateSiteChunk{Entries: []driver.UpdateSiteEntry{{VisiblePath: "/child", ParentPath: "/", Name: "child", IsDir: true}}}); err != nil {
 			return err
 		}
-		return onChunk(driver.UpdateSiteChunk{Parent: "/child", ParentDone: true})
+		return onChunk(driver.UpdateSiteChunk{Entries: []driver.UpdateSiteEntry{{VisiblePath: "/child/file", ParentPath: "/child", Name: "file"}}})
 	})
-	first, err := ScanPublicPathPage(context.Background(), ScanPageRequest{
-		Path:         "/",
-		MaxDepth:     -1,
-		IncludeThumb: true,
-		ChunkLimit:   1,
-	})
+	first, err := ScanPublicPathPage(context.Background(), ScanPageRequest{Path: "/", MaxDepth: -1, IncludeThumb: true, ChunkLimit: 1})
 	if err != nil {
 		t.Fatalf("first page: %v", err)
 	}
-	if _, err := ScanPublicPathPage(context.Background(), ScanPageRequest{
-		Path:         "/other",
-		MaxDepth:     -1,
-		IncludeThumb: true,
-		ChunkLimit:   1,
-		Cursor:       first.Cursor,
-	}); !errors.Is(err, ErrScanCursorMismatch) {
+	if _, err := ScanPublicPathPage(context.Background(), ScanPageRequest{Path: "/other", MaxDepth: -1, IncludeThumb: true, ChunkLimit: 1, Cursor: first.Cursor}); !errors.Is(err, ErrScanCursorMismatch) {
 		t.Fatalf("expected ErrScanCursorMismatch, got %v", err)
 	}
 }
@@ -148,9 +101,7 @@ func TestScanPublicPathPageUsesBoundedBuffer(t *testing.T) {
 		close(started)
 		for i := 0; i < defaultChunkBufferSize+5; i++ {
 			if err := onChunk(driver.UpdateSiteChunk{
-				Parent:     "/",
-				Entries:    []model.Obj{fakeObj("x", false)},
-				ParentDone: i == defaultChunkBufferSize+4,
+				Entries: []driver.UpdateSiteEntry{{VisiblePath: "/x", ParentPath: "/", Name: "x"}},
 			}); err != nil {
 				return err
 			}
@@ -206,13 +157,5 @@ func resetScanSessions() {
 	scanSessions.mu.Unlock()
 	for _, session := range sessions {
 		session.close()
-	}
-}
-
-func fakeObj(name string, isDir bool) model.Obj {
-	return &model.Object{
-		Name:     name,
-		Path:     "/" + name,
-		IsFolder: isDir,
 	}
 }

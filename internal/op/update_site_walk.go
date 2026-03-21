@@ -25,8 +25,9 @@ func WalkUpdateSitePublicChunks(ctx context.Context, rawPath string, maxDepth in
 				if onChunk == nil {
 					return nil
 				}
-				chunk.Parent = utils.GetFullPath(utils.GetActualMountPath(storage.GetStorage().MountPath), chunk.Parent)
-				return onChunk(chunk)
+				return onChunk(driver.UpdateSiteChunk{
+					Entries: remapUpdateSiteEntriesToPublicMount(utils.GetActualMountPath(storage.GetStorage().MountPath), chunk.Entries),
+				})
 			})
 		}
 		items, listErr := List(ctx, storage, actualPath, args)
@@ -38,16 +39,19 @@ func WalkUpdateSitePublicChunks(ctx context.Context, rawPath string, maxDepth in
 			return listErr
 		}
 		if onChunk != nil {
-			if err := onChunk(driver.UpdateSiteChunk{
-				Parent:     rawPath,
-				Entries:    merged,
-				ParentDone: true,
-				Debug: &driver.UpdateSiteChunkDebug{
-					Engine:        "list",
-					StorageMount:  storage.GetStorage().MountPath,
-					StorageDriver: storage.Config().Name,
-				},
-			}); err != nil {
+			entries := make([]driver.UpdateSiteEntry, 0, len(merged))
+			for _, obj := range merged {
+				debug := &driver.UpdateSiteEntryDebug{Engine: "virtual"}
+				if containsObjByName(items, obj.GetName()) {
+					debug = &driver.UpdateSiteEntryDebug{
+						Engine:        "list",
+						StorageMount:  storage.GetStorage().MountPath,
+						StorageDriver: storage.Config().Name,
+					}
+				}
+				entries = append(entries, makeUpdateSiteEntry(rawPath, obj, debug))
+			}
+			if err := onChunk(driver.UpdateSiteChunk{Entries: entries}); err != nil {
 				return err
 			}
 		}
@@ -60,14 +64,11 @@ func WalkUpdateSitePublicChunks(ctx context.Context, rawPath string, maxDepth in
 		return errors.WithStack(errs.ObjectNotFound)
 	}
 	if onChunk != nil {
-		if err := onChunk(driver.UpdateSiteChunk{
-			Parent:     rawPath,
-			Entries:    virtualFiles,
-			ParentDone: true,
-			Debug: &driver.UpdateSiteChunkDebug{
-				Engine: "virtual",
-			},
-		}); err != nil {
+		entries := make([]driver.UpdateSiteEntry, 0, len(virtualFiles))
+		for _, obj := range virtualFiles {
+			entries = append(entries, makeUpdateSiteEntry(rawPath, obj, &driver.UpdateSiteEntryDebug{Engine: "virtual"}))
+		}
+		if err := onChunk(driver.UpdateSiteChunk{Entries: entries}); err != nil {
 			return err
 		}
 	}
@@ -111,22 +112,26 @@ func WalkUpdateSiteStorageChunks(ctx context.Context, storage driver.Driver, act
 
 	withDebug := func(engine string) driver.UpdateSiteChunkCallback {
 		return func(chunk driver.UpdateSiteChunk) error {
-			if chunk.Debug == nil {
-				chunk.Debug = &driver.UpdateSiteChunkDebug{
-					Engine:        engine,
-					StorageMount:  storage.GetStorage().MountPath,
-					StorageDriver: storage.Config().Name,
-				}
-			}
 			if onChunk == nil {
 				return nil
 			}
-			return onChunk(chunk)
+			debug := &driver.UpdateSiteEntryDebug{
+				Engine:        engine,
+				StorageMount:  storage.GetStorage().MountPath,
+				StorageDriver: storage.Config().Name,
+			}
+			entries := cloneUpdateSiteEntries(chunk.Entries)
+			for i := range entries {
+				if entries[i].Debug == nil {
+					entries[i].Debug = debug
+				}
+			}
+			return onChunk(driver.UpdateSiteChunk{Entries: entries})
 		}
 	}
 
 	if updater, ok := storage.(driver.UpdateSiteListRer); ok {
-		return updater.ListRForUpdateSite(ctx, dir, args, maxDepth, withDebug("update_site_listr"))
+		return updater.ListRForUpdateSite(ctx, dir, args, maxDepth, withDebug("update_site_scanner"))
 	}
 	if listr, ok := storage.(driver.ListRer); ok {
 		return walkUpdateSiteStorageByListR(ctx, storage, listr, dir, args, maxDepth, withDebug("listr"))
@@ -135,21 +140,10 @@ func WalkUpdateSiteStorageChunks(ctx context.Context, storage driver.Driver, act
 }
 
 func walkUpdateSiteStorageByListR(ctx context.Context, storage driver.Driver, listr driver.ListRer, dir model.Obj, args model.ListArgs, maxDepth int, onChunk driver.UpdateSiteChunkCallback) error {
-	var pending *driver.UpdateSiteChunk
-	flushPending := func(parentDone bool) error {
-		if pending == nil || onChunk == nil {
-			pending = nil
-			return nil
-		}
-		chunk := *pending
-		chunk.ParentDone = parentDone
-		pending = nil
-		return onChunk(chunk)
-	}
-	err := listr.ListR(ctx, dir, args, maxDepth, func(parent string, entries []model.Obj) error {
+	return listr.ListR(ctx, dir, args, maxDepth, func(parent string, objs []model.Obj) error {
 		parent = utils.FixAndCleanPath(parent)
-		for i := range entries {
-			raw := model.UnwrapObj(entries[i])
+		for i := range objs {
+			raw := model.UnwrapObj(objs[i])
 			if raw.GetPath() != "" {
 				continue
 			}
@@ -157,41 +151,20 @@ func walkUpdateSiteStorageByListR(ctx context.Context, storage driver.Driver, li
 				setter.SetPath(stdpath.Join(parent, raw.GetName()))
 			}
 		}
-		model.WrapObjsName(entries)
+		model.WrapObjsName(objs)
 		if storage.Config().LocalSort {
-			model.SortFiles(entries, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
+			model.SortFiles(objs, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
 		}
-		model.ExtractFolder(entries, storage.GetStorage().ExtractFolder)
-		if pending == nil {
-			pending = &driver.UpdateSiteChunk{
-				Parent:  parent,
-				Entries: entries,
-			}
+		model.ExtractFolder(objs, storage.GetStorage().ExtractFolder)
+		if onChunk == nil || len(objs) == 0 {
 			return nil
 		}
-		if pending.Parent == parent {
-			if err := flushPending(false); err != nil {
-				return err
-			}
-			pending = &driver.UpdateSiteChunk{
-				Parent:  parent,
-				Entries: entries,
-			}
-			return nil
+		entries := make([]driver.UpdateSiteEntry, 0, len(objs))
+		for _, obj := range objs {
+			entries = append(entries, makeUpdateSiteEntry(parent, obj, nil))
 		}
-		if err := flushPending(true); err != nil {
-			return err
-		}
-		pending = &driver.UpdateSiteChunk{
-			Parent:  parent,
-			Entries: entries,
-		}
-		return nil
+		return onChunk(driver.UpdateSiteChunk{Entries: entries})
 	})
-	if err != nil {
-		return err
-	}
-	return flushPending(true)
 }
 
 func walkUpdateSiteStorageByList(ctx context.Context, storage driver.Driver, actualPath string, args model.ListArgs, maxDepth int, onChunk driver.UpdateSiteChunkCallback) error {
@@ -203,12 +176,12 @@ func walkUpdateSiteStorageByList(ctx context.Context, storage driver.Driver, act
 	if err != nil {
 		return err
 	}
-	if onChunk != nil {
-		if err := onChunk(driver.UpdateSiteChunk{
-			Parent:     actualPath,
-			Entries:    objs,
-			ParentDone: true,
-		}); err != nil {
+	if onChunk != nil && len(objs) > 0 {
+		entries := make([]driver.UpdateSiteEntry, 0, len(objs))
+		for _, obj := range objs {
+			entries = append(entries, makeUpdateSiteEntry(actualPath, obj, nil))
+		}
+		if err := onChunk(driver.UpdateSiteChunk{Entries: entries}); err != nil {
 			return err
 		}
 	}
@@ -229,4 +202,49 @@ func walkUpdateSiteStorageByList(ctx context.Context, storage driver.Driver, act
 		}
 	}
 	return nil
+}
+
+func makeUpdateSiteEntry(parentPath string, obj model.Obj, debug *driver.UpdateSiteEntryDebug) driver.UpdateSiteEntry {
+	thumb, _ := model.GetThumb(obj)
+	return driver.UpdateSiteEntry{
+		VisiblePath: stdpath.Join(parentPath, obj.GetName()),
+		ParentPath:  parentPath,
+		Name:        obj.GetName(),
+		IsDir:       obj.IsDir(),
+		Size:        obj.GetSize(),
+		Modified:    obj.ModTime(),
+		Thumb:       thumb,
+		Debug:       debug,
+	}
+}
+
+func remapUpdateSiteEntriesToPublicMount(mountPath string, entries []driver.UpdateSiteEntry) []driver.UpdateSiteEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	remapped := make([]driver.UpdateSiteEntry, len(entries))
+	for i := range entries {
+		remapped[i] = entries[i]
+		remapped[i].VisiblePath = utils.GetFullPath(mountPath, entries[i].VisiblePath)
+		remapped[i].ParentPath = utils.GetFullPath(mountPath, entries[i].ParentPath)
+	}
+	return remapped
+}
+
+func cloneUpdateSiteEntries(entries []driver.UpdateSiteEntry) []driver.UpdateSiteEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	cloned := make([]driver.UpdateSiteEntry, len(entries))
+	copy(cloned, entries)
+	return cloned
+}
+
+func containsObjByName(objs []model.Obj, name string) bool {
+	for _, obj := range objs {
+		if obj.GetName() == name {
+			return true
+		}
+	}
+	return false
 }

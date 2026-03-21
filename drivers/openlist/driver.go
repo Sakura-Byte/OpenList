@@ -372,3 +372,4 @@ func (d *OpenList) ResolveLinkCacheMode(_ string) driver.LinkCacheMode {
 }
 
 var _ driver.Driver = (*OpenList)(nil)
+var _ driver.UpdateSiteListRer = (*OpenList)(nil)
