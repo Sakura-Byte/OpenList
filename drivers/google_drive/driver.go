@@ -201,3 +201,5 @@ func (d *GoogleDrive) GetDetails(ctx context.Context) (*model.StorageDetails, er
 }
 
 var _ driver.Driver = (*GoogleDrive)(nil)
+var _ driver.ListRer = (*GoogleDrive)(nil)
+var _ driver.UpdateSiteListRer = (*GoogleDrive)(nil)

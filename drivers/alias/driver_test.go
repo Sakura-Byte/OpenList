@@ -32,9 +32,10 @@ var (
 )
 
 type fakeThumbData struct {
-	get     map[string]model.Obj
-	list    map[string][]model.Obj
-	details *model.StorageDetails
+	get              map[string]model.Obj
+	list             map[string][]model.Obj
+	details          *model.StorageDetails
+	updateSiteChunks []driver.UpdateSiteChunk
 }
 
 type fakeThumbDriver struct {

@@ -11,10 +11,8 @@ import (
 func init() {
 	updatesite.SetStorageProvider(GetAllStorages)
 	updatesite.SetPublicScanDeps(
-		GetStorageAndActualPath,
-		func(ctx context.Context, storage driver.Driver, actualPath string) ([]model.Obj, error) {
-			return List(ctx, storage, actualPath, model.ListArgs{Refresh: true})
+		func(ctx context.Context, rawPath string, maxDepth int, onChunk driver.UpdateSiteChunkCallback) error {
+			return WalkUpdateSitePublicChunks(ctx, rawPath, maxDepth, model.ListArgs{Refresh: true}, onChunk)
 		},
-		GetStorageVirtualFilesByPath,
 	)
 }

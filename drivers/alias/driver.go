@@ -327,6 +327,118 @@ func (d *Alias) ListR(ctx context.Context, dir model.Obj, args model.ListArgs, m
 	return d.listRForDsts(ctx, roots, aliasPrefix, sub, args, maxDepth, callback)
 }
 
+func (d *Alias) ListRForUpdateSite(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback driver.UpdateSiteChunkCallback) error {
+	if maxDepth == 0 || callback == nil {
+		return nil
+	}
+	path := d.rawPathToAliasPath(dir.GetPath())
+	if path == "" {
+		path = "/"
+	}
+	if utils.PathEqual(path, "/") && len(d.rootOrder) > 1 {
+		rootEntries := make([]model.Obj, 0, len(d.rootOrder))
+		for _, k := range d.rootOrder {
+			rootEntries = append(rootEntries, &model.Object{
+				Name:     k,
+				IsFolder: true,
+				Modified: d.Modified,
+			})
+		}
+		if err := callback(driver.UpdateSiteChunk{
+			Parent:     "/",
+			Entries:    rootEntries,
+			ParentDone: true,
+		}); err != nil {
+			return err
+		}
+		if maxDepth == 1 {
+			return nil
+		}
+		nextDepth := maxDepth
+		if maxDepth > 0 {
+			nextDepth = maxDepth - 1
+		}
+		for _, k := range d.rootOrder {
+			if err := d.listRForUpdateSiteDsts(ctx, d.pathMap[k], "/"+k, "", args, nextDepth, callback); err != nil {
+				if errors.Is(err, context.Canceled) || utils.IsCanceled(ctx) {
+					return err
+				}
+				log.Warnf("alias update-site ListR for root key %s failed: %v", k, err)
+			}
+		}
+		return nil
+	}
+	roots, sub := d.getRootsAndPath(path)
+	if len(roots) == 0 {
+		return errs.ObjectNotFound
+	}
+	aliasPrefix := ""
+	if len(d.rootOrder) > 1 {
+		trimmed := strings.TrimPrefix(path, "/")
+		root, _, _ := strings.Cut(trimmed, "/")
+		if root == "" {
+			return errs.ObjectNotFound
+		}
+		aliasPrefix = "/" + root
+	}
+	return d.listRForUpdateSiteDsts(ctx, roots, aliasPrefix, sub, args, maxDepth, callback)
+}
+
+func (d *Alias) listRForUpdateSiteDsts(ctx context.Context, dsts []string, aliasPrefix, sub string,
+	args model.ListArgs, maxDepth int, callback driver.UpdateSiteChunkCallback) error {
+	var lastErr error
+	anyChunkSent := false
+	for _, dst := range dsts {
+		rawPath := stdpath.Join(dst, sub)
+		storage, actualPath, err := op.GetStorageAndActualPath(rawPath)
+		if err != nil {
+			log.Warnf("alias update-site ListR: failed to resolve storage for %s: %v", rawPath, err)
+			lastErr = err
+			continue
+		}
+		err = op.WalkUpdateSiteStorageChunks(ctx, storage, actualPath, maxDepth, args, func(chunk driver.UpdateSiteChunk) error {
+			anyChunkSent = true
+			fullParent := utils.GetFullPath(utils.GetActualMountPath(storage.GetStorage().MountPath), chunk.Parent)
+			subParent := strings.TrimPrefix(fullParent, dst)
+			if subParent == "" {
+				subParent = "/"
+			}
+			aliasParent := stdpath.Join(aliasPrefix, subParent)
+			if aliasParent == "" {
+				aliasParent = "/"
+			}
+			converted := make([]model.Obj, len(chunk.Entries))
+			for i, obj := range chunk.Entries {
+				converted[i] = &model.Object{
+					Name:     obj.GetName(),
+					Size:     obj.GetSize(),
+					Modified: obj.ModTime(),
+					IsFolder: obj.IsDir(),
+				}
+			}
+			return callback(driver.UpdateSiteChunk{
+				Parent:     aliasParent,
+				Entries:    converted,
+				ParentDone: chunk.ParentDone,
+			})
+		})
+		if err != nil {
+			if errors.Is(err, context.Canceled) || utils.IsCanceled(ctx) {
+				return err
+			}
+			log.Warnf("alias update-site ListR for %s failed: %v", rawPath, err)
+			lastErr = err
+		}
+	}
+	if lastErr != nil && !anyChunkSent {
+		return lastErr
+	}
+	if lastErr != nil {
+		log.Warnf("alias update-site ListR partial failure (some data already sent, skipping fallback): %v", lastErr)
+	}
+	return nil
+}
+
 func (d *Alias) listRForDsts(ctx context.Context, dsts []string, aliasPrefix, sub string,
 	args model.ListArgs, maxDepth int, callback driver.ListRCallback) error {
 	var lastErr error
@@ -715,3 +827,4 @@ func (d *Alias) ResolveLinkCacheMode(path string) driver.LinkCacheMode {
 
 var _ driver.Driver = (*Alias)(nil)
 var _ driver.ListRer = (*Alias)(nil)
+var _ driver.UpdateSiteListRer = (*Alias)(nil)

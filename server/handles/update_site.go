@@ -15,7 +15,7 @@ type UpdateSiteRecursiveListReq struct {
 	Path         string `json:"path" form:"path"`
 	MaxDepth     int    `json:"max_depth" form:"max_depth"`
 	IncludeThumb *bool  `json:"include_thumb" form:"include_thumb"`
-	PageLimit    int    `json:"page_limit" form:"page_limit"`
+	ChunkLimit   int    `json:"chunk_limit" form:"chunk_limit"`
 	Cursor       string `json:"cursor" form:"cursor"`
 }
 
@@ -27,19 +27,20 @@ type UpdateSiteRecursiveEntryResp struct {
 	Thumb    string    `json:"thumb"`
 }
 
-type UpdateSiteRecursiveBatchResp struct {
+type UpdateSiteRecursiveChunkResp struct {
 	Parent  string                         `json:"parent"`
 	Content []UpdateSiteRecursiveEntryResp `json:"content"`
+	Done    bool                           `json:"parent_done"`
 }
 
 type UpdateSiteRecursiveListResp struct {
-	Batches []UpdateSiteRecursiveBatchResp `json:"batches"`
-	Cursor  string                         `json:"cursor,omitempty"`
-	Done    bool                           `json:"done"`
-	Stats   updatesite.ScanPageStats       `json:"stats"`
-	Meta    struct {
+	Chunks []UpdateSiteRecursiveChunkResp `json:"chunks"`
+	Cursor string                         `json:"cursor,omitempty"`
+	Done   bool                           `json:"done"`
+	Stats  updatesite.ScanPageStats       `json:"stats"`
+	Meta   struct {
 		IncludeThumb bool `json:"include_thumb"`
-		PageLimit    int  `json:"page_limit"`
+		ChunkLimit   int  `json:"chunk_limit"`
 	} `json:"meta"`
 }
 
@@ -64,7 +65,7 @@ func UpdateSiteListRecursive(c *gin.Context) {
 		Path:         req.Path,
 		MaxDepth:     req.MaxDepth,
 		IncludeThumb: includeThumb,
-		PageLimit:    req.PageLimit,
+		ChunkLimit:   req.ChunkLimit,
 		Cursor:       req.Cursor,
 	})
 	if err != nil {
@@ -84,24 +85,25 @@ func UpdateSiteListRecursive(c *gin.Context) {
 	}
 
 	resp := UpdateSiteRecursiveListResp{
-		Batches: make([]UpdateSiteRecursiveBatchResp, 0, len(page.Batches)),
-		Cursor:  page.Cursor,
-		Done:    page.Done,
-		Stats:   page.Stats,
+		Chunks: make([]UpdateSiteRecursiveChunkResp, 0, len(page.Chunks)),
+		Cursor: page.Cursor,
+		Done:   page.Done,
+		Stats:  page.Stats,
 	}
 	resp.Meta.IncludeThumb = page.Meta.IncludeThumb
-	resp.Meta.PageLimit = page.Meta.PageLimit
-	for _, pageBatch := range page.Batches {
-		batch := UpdateSiteRecursiveBatchResp{
-			Parent:  pageBatch.ParentPath,
-			Content: make([]UpdateSiteRecursiveEntryResp, 0, len(pageBatch.Nodes)),
+	resp.Meta.ChunkLimit = page.Meta.ChunkLimit
+	for _, pageChunk := range page.Chunks {
+		chunk := UpdateSiteRecursiveChunkResp{
+			Parent:  pageChunk.ParentPath,
+			Content: make([]UpdateSiteRecursiveEntryResp, 0, len(pageChunk.Nodes)),
+			Done:    pageChunk.ParentDone,
 		}
-		for _, obj := range pageBatch.Nodes {
+		for _, obj := range pageChunk.Nodes {
 			thumb := ""
 			if includeThumb {
 				thumb, _ = model.GetThumb(obj)
 			}
-			batch.Content = append(batch.Content, UpdateSiteRecursiveEntryResp{
+			chunk.Content = append(chunk.Content, UpdateSiteRecursiveEntryResp{
 				Name:     obj.GetName(),
 				Size:     obj.GetSize(),
 				IsDir:    obj.IsDir(),
@@ -109,7 +111,7 @@ func UpdateSiteListRecursive(c *gin.Context) {
 				Thumb:    thumb,
 			})
 		}
-		resp.Batches = append(resp.Batches, batch)
+		resp.Chunks = append(resp.Chunks, chunk)
 	}
 	common.SuccessResp(c, resp)
 }

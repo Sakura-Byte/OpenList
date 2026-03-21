@@ -260,6 +260,29 @@ func (d *GoogleDrive) getFilesByParentIDs(parentIDs []string) ([]File, error) {
 	return d.getFilesByQuery(buildListRParentsQuery(parentIDs), "")
 }
 
+func (d *GoogleDrive) getFilesPageByQuery(query, orderBy, pageToken string) (Files, error) {
+	var resp Files
+	queryParams := map[string]string{
+		"fields":   FilesListFields,
+		"pageSize": "1000",
+		"q":        query,
+	}
+	if pageToken != "" {
+		queryParams["pageToken"] = pageToken
+	}
+	if orderBy != "" {
+		queryParams["orderBy"] = orderBy
+	}
+	_, err := d.request("https://www.googleapis.com/drive/v3/files", http.MethodGet, func(req *resty.Request) {
+		req.SetQueryParams(queryParams)
+	}, &resp)
+	if err != nil {
+		return Files{}, err
+	}
+	d.fillShortcutFileInfo(&resp)
+	return resp, nil
+}
+
 func googleDriveListRCheckers() int {
 	if conf.Conf != nil && conf.Conf.IndexListR.Checkers > 0 {
 		return conf.Conf.IndexListR.Checkers
@@ -323,25 +346,10 @@ func (d *GoogleDrive) getFilesByQuery(query, orderBy string) ([]File, error) {
 	pageToken := ""
 	res := make([]File, 0)
 	for {
-		var resp Files
-		queryParams := map[string]string{
-			"fields":   FilesListFields,
-			"pageSize": "1000",
-			"q":        query,
-		}
-		if pageToken != "" {
-			queryParams["pageToken"] = pageToken
-		}
-		if orderBy != "" {
-			queryParams["orderBy"] = orderBy
-		}
-		_, err := d.request("https://www.googleapis.com/drive/v3/files", http.MethodGet, func(req *resty.Request) {
-			req.SetQueryParams(queryParams)
-		}, &resp)
+		resp, err := d.getFilesPageByQuery(query, orderBy, pageToken)
 		if err != nil {
 			return nil, err
 		}
-		d.fillShortcutFileInfo(&resp)
 		res = append(res, resp.Files...)
 		if resp.NextPageToken == "" {
 			break
@@ -653,6 +661,74 @@ func (d *GoogleDrive) ListR(ctx context.Context, dir model.Obj, args model.ListA
 	workerWg.Wait()
 	close(out)
 	return retErr
+}
+
+func (d *GoogleDrive) ListRForUpdateSite(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback driver.UpdateSiteChunkCallback) error {
+	_ = args
+	if maxDepth == 0 || callback == nil {
+		return nil
+	}
+	rootID := dir.GetID()
+	if rootID == "" {
+		return fmt.Errorf("google drive update-site ListR: empty root id")
+	}
+	rootPath := utils.FixAndCleanPath(dir.GetPath())
+	if rootPath == "" {
+		rootPath = "/"
+	}
+	type task struct {
+		id    string
+		path  string
+		depth int
+	}
+	queue := []task{{id: rootID, path: rootPath, depth: 0}}
+	for len(queue) > 0 {
+		if utils.IsCanceled(ctx) {
+			return ctx.Err()
+		}
+		current := queue[0]
+		queue = queue[1:]
+		pageToken := ""
+		nextTasks := make([]task, 0)
+		query := fmt.Sprintf("'%s' in parents and trashed = false", current.id)
+		for {
+			resp, err := d.getFilesPageByQuery(query, "", pageToken)
+			if err != nil {
+				return err
+			}
+			entries := make([]model.Obj, 0, len(resp.Files))
+			for i := range resp.Files {
+				obj := fileToObj(resp.Files[i])
+				raw := model.UnwrapObj(obj)
+				if raw.GetPath() == "" {
+					if setter, ok := raw.(model.SetPath); ok {
+						setter.SetPath(stdpath.Join(current.path, raw.GetName()))
+					}
+				}
+				entries = append(entries, obj)
+				if obj.IsDir() && (maxDepth < 0 || current.depth+1 < maxDepth) {
+					nextTasks = append(nextTasks, task{
+						id:    obj.GetID(),
+						path:  stdpath.Join(current.path, obj.GetName()),
+						depth: current.depth + 1,
+					})
+				}
+			}
+			if err := callback(driver.UpdateSiteChunk{
+				Parent:     current.path,
+				Entries:    entries,
+				ParentDone: resp.NextPageToken == "",
+			}); err != nil {
+				return err
+			}
+			if resp.NextPageToken == "" {
+				break
+			}
+			pageToken = resp.NextPageToken
+		}
+		queue = append(queue, nextTasks...)
+	}
+	return nil
 }
 
 func mapGoogleDriveListRFiles(files []File, parentIDs []string, taskByParentID map[string]googleDriveListRTask,

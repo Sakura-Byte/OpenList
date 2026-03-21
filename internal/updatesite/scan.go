@@ -3,94 +3,104 @@ package updatesite
 import (
 	"context"
 	"errors"
-	stdpath "path"
+	"sync"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/google/uuid"
 )
 
 const (
-	defaultScanPageLimit = 32
-	maxScanPageLimit     = 256
-	scanCursorTTL        = 10 * time.Minute
+	defaultScanChunkLimit  = 32
+	maxScanChunkLimit      = 256
+	scanCursorTTL          = 10 * time.Minute
+	defaultChunkBufferSize = 64
 )
 
 var (
-	resolveStorageAndActualPath func(rawPath string) (driver.Driver, string, error)
-	listStorageDirectory        func(ctx context.Context, storage driver.Driver, actualPath string) ([]model.Obj, error)
-	listVirtualChildren         func(prefix string) []model.Obj
+	walkPublicScan func(ctx context.Context, rawPath string, maxDepth int, onChunk driver.UpdateSiteChunkCallback) error
 
 	ErrScanCursorExpired  = errors.New("update-site scan cursor expired")
 	ErrScanCursorMismatch = errors.New("update-site scan cursor does not match request")
 	ErrScanNotConfigured  = errors.New("update-site scan dependencies are not configured")
 
-	scanSessionCache = cache.NewKeyedCache[*scanSession](scanCursorTTL)
+	scanSessions = newScanSessionStore()
 )
 
 type ScanPageRequest struct {
 	Path         string
 	MaxDepth     int
 	IncludeThumb bool
-	PageLimit    int
+	ChunkLimit   int
 	Cursor       string
 }
 
-type ScanPageBatch struct {
+type ScanPageChunk struct {
 	ParentPath string
 	Nodes      []model.Obj
+	ParentDone bool
 }
 
 type ScanPageStats struct {
-	PageCount   int `json:"page_count"`
-	DirCount    int `json:"dir_count"`
-	EntryCount  int `json:"entry_count"`
-	PendingDirs int `json:"pending_dirs"`
+	PageCount     int `json:"page_count"`
+	ChunkCount    int `json:"chunk_count"`
+	DirCount      int `json:"dir_count"`
+	EntryCount    int `json:"entry_count"`
+	PendingChunks int `json:"pending_chunks"`
 }
 
 type ScanPageMeta struct {
 	IncludeThumb bool `json:"include_thumb"`
-	PageLimit    int  `json:"page_limit"`
+	ChunkLimit   int  `json:"chunk_limit"`
 }
 
 type ScanPageResponse struct {
-	Batches []ScanPageBatch `json:"batches"`
-	Cursor  string          `json:"cursor,omitempty"`
-	Done    bool            `json:"done"`
-	Stats   ScanPageStats   `json:"stats"`
-	Meta    ScanPageMeta    `json:"meta"`
-}
-
-type scanTask struct {
-	Path  string
-	Depth int
+	Chunks []ScanPageChunk `json:"chunks"`
+	Cursor string          `json:"cursor,omitempty"`
+	Done   bool            `json:"done"`
+	Stats  ScanPageStats   `json:"stats"`
+	Meta   ScanPageMeta    `json:"meta"`
 }
 
 type scanSession struct {
-	Path         string
-	MaxDepth     int
-	IncludeThumb bool
-	Queue        []scanTask
-	Seen         map[string]struct{}
-	Stats        ScanPageStats
+	cursor       string
+	path         string
+	maxDepth     int
+	includeThumb bool
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	pageMu sync.Mutex
+
+	mu         sync.Mutex
+	stats      ScanPageStats
+	done       bool
+	err        error
+	timer      *time.Timer
+	chunks     chan ScanPageChunk
+	lastAccess time.Time
 }
 
-func SetPublicScanDeps(
-	resolve func(rawPath string) (driver.Driver, string, error),
-	list func(ctx context.Context, storage driver.Driver, actualPath string) ([]model.Obj, error),
-	virtuals func(prefix string) []model.Obj,
-) {
-	resolveStorageAndActualPath = resolve
-	listStorageDirectory = list
-	listVirtualChildren = virtuals
+type scanSessionStore struct {
+	mu       sync.Mutex
+	sessions map[string]*scanSession
+}
+
+func newScanSessionStore() *scanSessionStore {
+	return &scanSessionStore{
+		sessions: make(map[string]*scanSession),
+	}
+}
+
+func SetPublicScanDeps(walk func(ctx context.Context, rawPath string, maxDepth int, onChunk driver.UpdateSiteChunkCallback) error) {
+	walkPublicScan = walk
 }
 
 func ScanPublicPathPage(ctx context.Context, req ScanPageRequest) (ScanPageResponse, error) {
-	if resolveStorageAndActualPath == nil || listStorageDirectory == nil || listVirtualChildren == nil {
+	if walkPublicScan == nil {
 		return ScanPageResponse{}, ErrScanNotConfigured
 	}
 
@@ -101,150 +111,212 @@ func ScanPublicPathPage(ctx context.Context, req ScanPageRequest) (ScanPageRespo
 	if req.MaxDepth == 0 {
 		req.MaxDepth = -1
 	}
-	req.PageLimit = normalizeScanPageLimit(req.PageLimit)
+	req.ChunkLimit = normalizeScanChunkLimit(req.ChunkLimit)
 
-	cursor := req.Cursor
-	session, err := loadOrCreateScanSession(req)
+	cursor, session, err := scanSessions.loadOrCreate(req)
 	if err != nil {
 		return ScanPageResponse{}, err
 	}
-	if cursor == "" {
-		cursor = uuid.NewString()
+
+	resp, err := session.nextPage(ctx, req.ChunkLimit)
+	if err != nil {
+		scanSessions.delete(cursor)
+		return ScanPageResponse{}, err
 	}
-
-	nextSession := cloneScanSession(session)
-	resp := ScanPageResponse{
-		Batches: make([]ScanPageBatch, 0, req.PageLimit),
-		Cursor:  cursor,
-		Done:    false,
-		Meta: ScanPageMeta{
-			IncludeThumb: nextSession.IncludeThumb,
-			PageLimit:    req.PageLimit,
-		},
-	}
-
-	for len(resp.Batches) < req.PageLimit && len(nextSession.Queue) > 0 {
-		task := nextSession.Queue[0]
-		nextSession.Queue = nextSession.Queue[1:]
-		task.Path = utils.FixAndCleanPath(task.Path)
-		if _, seen := nextSession.Seen[task.Path]; seen {
-			continue
-		}
-		nextSession.Seen[task.Path] = struct{}{}
-
-		nodes, err := listPublicDirectorySnapshot(ctx, task.Path)
-		if err != nil {
-			return ScanPageResponse{}, err
-		}
-		resp.Batches = append(resp.Batches, ScanPageBatch{
-			ParentPath: task.Path,
-			Nodes:      nodes,
-		})
-		nextSession.Stats.DirCount++
-		nextSession.Stats.EntryCount += len(nodes)
-
-		if nextSession.MaxDepth >= 0 && task.Depth+1 >= nextSession.MaxDepth {
-			continue
-		}
-		for _, node := range nodes {
-			if !node.IsDir() {
-				continue
-			}
-			nextSession.Queue = append(nextSession.Queue, scanTask{
-				Path:  stdpath.Join(task.Path, node.GetName()),
-				Depth: task.Depth + 1,
-			})
-		}
-	}
-
-	nextSession.Stats.PageCount++
-	nextSession.Stats.PendingDirs = len(nextSession.Queue)
-	resp.Stats = nextSession.Stats
-
-	if len(nextSession.Queue) == 0 {
-		resp.Done = true
+	resp.Meta.IncludeThumb = session.includeThumb
+	resp.Meta.ChunkLimit = req.ChunkLimit
+	if resp.Done {
 		resp.Cursor = ""
-		scanSessionCache.Delete(cursor)
+		scanSessions.delete(cursor)
 		return resp, nil
 	}
-
-	scanSessionCache.SetWithTTL(cursor, nextSession, scanCursorTTL)
+	resp.Cursor = cursor
 	return resp, nil
 }
 
-func normalizeScanPageLimit(limit int) int {
+func normalizeScanChunkLimit(limit int) int {
 	switch {
 	case limit <= 0:
-		return defaultScanPageLimit
-	case limit > maxScanPageLimit:
-		return maxScanPageLimit
+		return defaultScanChunkLimit
+	case limit > maxScanChunkLimit:
+		return maxScanChunkLimit
 	default:
 		return limit
 	}
 }
 
-func loadOrCreateScanSession(req ScanPageRequest) (*scanSession, error) {
+func (s *scanSessionStore) loadOrCreate(req ScanPageRequest) (string, *scanSession, error) {
 	if req.Cursor == "" {
-		return &scanSession{
-			Path:         req.Path,
-			MaxDepth:     req.MaxDepth,
-			IncludeThumb: req.IncludeThumb,
-			Queue:        []scanTask{{Path: req.Path, Depth: 0}},
-			Seen:         map[string]struct{}{},
-			Stats:        ScanPageStats{},
-		}, nil
+		cursor := uuid.NewString()
+		session := newScanSession(cursor, req)
+		s.mu.Lock()
+		s.sessions[cursor] = session
+		s.mu.Unlock()
+		session.start()
+		return cursor, session, nil
 	}
 
-	session, ok := scanSessionCache.Get(req.Cursor)
+	s.mu.Lock()
+	session, ok := s.sessions[req.Cursor]
+	s.mu.Unlock()
 	if !ok {
-		return nil, ErrScanCursorExpired
+		return "", nil, ErrScanCursorExpired
 	}
-	if session.Path != req.Path || session.MaxDepth != req.MaxDepth || session.IncludeThumb != req.IncludeThumb {
-		return nil, ErrScanCursorMismatch
+	if session.path != req.Path || session.maxDepth != req.MaxDepth || session.includeThumb != req.IncludeThumb {
+		return "", nil, ErrScanCursorMismatch
 	}
-	return session, nil
+	session.touch()
+	return req.Cursor, session, nil
 }
 
-func cloneScanSession(session *scanSession) *scanSession {
-	queue := make([]scanTask, len(session.Queue))
-	copy(queue, session.Queue)
-	seen := make(map[string]struct{}, len(session.Seen))
-	for key := range session.Seen {
-		seen[key] = struct{}{}
+func (s *scanSessionStore) delete(cursor string) {
+	s.mu.Lock()
+	session, ok := s.sessions[cursor]
+	if ok {
+		delete(s.sessions, cursor)
 	}
-	return &scanSession{
-		Path:         session.Path,
-		MaxDepth:     session.MaxDepth,
-		IncludeThumb: session.IncludeThumb,
-		Queue:        queue,
-		Seen:         seen,
-		Stats:        session.Stats,
+	s.mu.Unlock()
+	if ok {
+		session.close()
 	}
 }
 
-func listPublicDirectorySnapshot(ctx context.Context, rawPath string) ([]model.Obj, error) {
-	rawPath = utils.FixAndCleanPath(rawPath)
-	virtualFiles := listVirtualChildren(rawPath)
+func (s *scanSessionStore) expire(cursor string) {
+	s.delete(cursor)
+}
 
-	storage, actualPath, err := resolveStorageAndActualPath(rawPath)
-	if err == nil {
-		items, listErr := listStorageDirectory(ctx, storage, actualPath)
-		if listErr != nil && len(virtualFiles) == 0 {
-			return nil, listErr
-		}
-		if len(virtualFiles) == 0 {
-			if items == nil {
-				return []model.Obj{}, nil
+func newScanSession(cursor string, req ScanPageRequest) *scanSession {
+	ctx, cancel := context.WithCancel(context.Background())
+	session := &scanSession{
+		cursor:       cursor,
+		path:         req.Path,
+		maxDepth:     req.MaxDepth,
+		includeThumb: req.IncludeThumb,
+		ctx:          ctx,
+		cancel:       cancel,
+		chunks:       make(chan ScanPageChunk, defaultChunkBufferSize),
+		lastAccess:   time.Now(),
+	}
+	session.timer = time.AfterFunc(scanCursorTTL, func() {
+		scanSessions.expire(cursor)
+	})
+	return session
+}
+
+func (s *scanSession) start() {
+	go func() {
+		err := walkPublicScan(s.ctx, s.path, s.maxDepth, func(chunk driver.UpdateSiteChunk) error {
+			return s.emitChunk(chunk)
+		})
+		s.finish(err)
+	}()
+}
+
+func (s *scanSession) emitChunk(chunk driver.UpdateSiteChunk) error {
+	select {
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	default:
+	}
+	pageChunk := ScanPageChunk{
+		ParentPath: utils.FixAndCleanPath(chunk.Parent),
+		Nodes:      chunk.Entries,
+		ParentDone: chunk.ParentDone,
+	}
+	select {
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	case s.chunks <- pageChunk:
+	}
+	s.mu.Lock()
+	s.stats.ChunkCount++
+	s.stats.EntryCount += len(pageChunk.Nodes)
+	if pageChunk.ParentDone {
+		s.stats.DirCount++
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *scanSession) finish(err error) {
+	s.mu.Lock()
+	if s.done {
+		s.mu.Unlock()
+		return
+	}
+	if errors.Is(err, context.Canceled) && s.ctx.Err() != nil {
+		err = nil
+	}
+	s.done = true
+	s.err = err
+	close(s.chunks)
+	s.mu.Unlock()
+}
+
+func (s *scanSession) close() {
+	s.cancel()
+	s.mu.Lock()
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+	s.mu.Unlock()
+}
+
+func (s *scanSession) touch() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastAccess = time.Now()
+	if s.timer != nil {
+		s.timer.Reset(scanCursorTTL)
+	}
+}
+
+func (s *scanSession) nextPage(ctx context.Context, chunkLimit int) (ScanPageResponse, error) {
+	s.pageMu.Lock()
+	defer s.pageMu.Unlock()
+
+	s.touch()
+	resp := ScanPageResponse{
+		Chunks: make([]ScanPageChunk, 0, chunkLimit),
+	}
+
+	for len(resp.Chunks) < chunkLimit {
+		if len(resp.Chunks) > 0 {
+			select {
+			case chunk, ok := <-s.chunks:
+				if !ok {
+					goto finalize
+				}
+				resp.Chunks = append(resp.Chunks, chunk)
+				continue
+			default:
+				goto finalize
 			}
-			return items, nil
 		}
-		return model.NewObjMerge().Merge(items, virtualFiles...), nil
+
+		select {
+		case <-ctx.Done():
+			return ScanPageResponse{}, ctx.Err()
+		case chunk, ok := <-s.chunks:
+			if !ok {
+				goto finalize
+			}
+			resp.Chunks = append(resp.Chunks, chunk)
+		}
 	}
-	if !errors.Is(err, errs.StorageNotFound) {
-		return nil, err
+
+finalize:
+	s.mu.Lock()
+	s.stats.PageCount++
+	resp.Stats = s.stats
+	resp.Stats.PendingChunks = len(s.chunks)
+	done := s.done && len(s.chunks) == 0
+	err := s.err
+	s.mu.Unlock()
+
+	if err != nil && len(resp.Chunks) == 0 {
+		return ScanPageResponse{}, err
 	}
-	if len(virtualFiles) == 0 {
-		return nil, errs.ObjectNotFound
-	}
-	return virtualFiles, nil
+	resp.Done = done
+	return resp, nil
 }

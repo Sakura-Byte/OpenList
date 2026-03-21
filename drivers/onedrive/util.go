@@ -169,7 +169,7 @@ func (d *Onedrive) Request(url string, method string, callback base.ReqCallback,
 
 func (d *Onedrive) getFiles(path string) ([]File, error) {
 	var res []File
-	nextLink := d.GetMetaUrl(false, path) + "/children?$top=1000&$expand=thumbnails($select=medium)&$select=id,name,size,fileSystemInfo,content.downloadUrl,file,parentReference"
+	nextLink := d.childrenNextLink(path)
 	for nextLink != "" {
 		var files Files
 		_, err := d.Request(nextLink, http.MethodGet, nil, &files)
@@ -180,6 +180,44 @@ func (d *Onedrive) getFiles(path string) ([]File, error) {
 		nextLink = files.NextLink
 	}
 	return res, nil
+}
+
+func (d *Onedrive) childrenNextLink(path string) string {
+	return d.GetMetaUrl(false, path) + "/children?$top=1000&$expand=thumbnails($select=medium)&$select=id,name,size,fileSystemInfo,content.downloadUrl,file,parentReference"
+}
+
+func (d *Onedrive) requestChildrenPageWithRetry(ctx context.Context, nextLink string) (Files, error) {
+	attempts := onedriveListRRequestAttempts()
+	retryDelay := onedriveListRRetryDelay()
+	var (
+		files   Files
+		lastErr error
+	)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if utils.IsCanceled(ctx) {
+			return Files{}, ctx.Err()
+		}
+		files = Files{}
+		_, err := d.Request(nextLink, http.MethodGet, nil, &files)
+		if err == nil {
+			return files, nil
+		}
+		lastErr = err
+		if attempt == attempts {
+			break
+		}
+		log.Warnf("onedrive update-site children request failed, retrying (%d/%d), err=%v",
+			attempt, attempts, err)
+		backoff := time.Duration(attempt) * retryDelay
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return Files{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return Files{}, lastErr
 }
 
 func onedriveListRRequestAttempts() int {
@@ -294,6 +332,72 @@ func (d *Onedrive) ListR(ctx context.Context, dir model.Obj, args model.ListArgs
 		}
 		if err := d.listRByList(ctx, sharedDirs[i], remainingDepth, callback); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (d *Onedrive) ListRForUpdateSite(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback driver.UpdateSiteChunkCallback) error {
+	_ = args
+	if maxDepth == 0 || callback == nil {
+		return nil
+	}
+	type task struct {
+		obj   model.Obj
+		depth int
+	}
+	queue := []task{{obj: dir, depth: 0}}
+	for len(queue) > 0 {
+		if utils.IsCanceled(ctx) {
+			return ctx.Err()
+		}
+		current := queue[0]
+		queue = queue[1:]
+		parentPath := utils.FixAndCleanPath(current.obj.GetPath())
+		if parentPath == "" {
+			parentPath = "/"
+		}
+		nextLink := d.childrenNextLink(parentPath)
+		nextDirs := make([]model.Obj, 0)
+		for {
+			files, err := d.requestChildrenPageWithRetry(ctx, nextLink)
+			if err != nil {
+				return err
+			}
+			entries := make([]model.Obj, 0, len(files.Value))
+			for i := range files.Value {
+				obj := fileToObj(files.Value[i], current.obj.GetID())
+				raw := model.UnwrapObj(obj)
+				if raw.GetPath() == "" {
+					if setter, ok := raw.(model.SetPath); ok {
+						setter.SetPath(stdpath.Join(parentPath, raw.GetName()))
+					}
+				}
+				entries = append(entries, obj)
+				if obj.IsDir() {
+					nextDirs = append(nextDirs, obj)
+				}
+			}
+			if err := callback(driver.UpdateSiteChunk{
+				Parent:     parentPath,
+				Entries:    entries,
+				ParentDone: files.NextLink == "",
+			}); err != nil {
+				return err
+			}
+			if files.NextLink == "" {
+				break
+			}
+			nextLink = files.NextLink
+		}
+		if maxDepth >= 0 && current.depth+1 >= maxDepth {
+			continue
+		}
+		for _, nextDir := range nextDirs {
+			queue = append(queue, task{
+				obj:   nextDir,
+				depth: current.depth + 1,
+			})
 		}
 	}
 	return nil

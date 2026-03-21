@@ -254,3 +254,5 @@ func (d *Onedrive) GetDirectUploadInfo(ctx context.Context, _ string, dstDir mod
 }
 
 var _ driver.Driver = (*Onedrive)(nil)
+var _ driver.ListRer = (*Onedrive)(nil)
+var _ driver.UpdateSiteListRer = (*Onedrive)(nil)

@@ -46,6 +46,20 @@ type ListRer interface {
 	ListR(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback ListRCallback) error
 }
 
+type UpdateSiteChunk struct {
+	Parent     string
+	Entries    []model.Obj
+	ParentDone bool
+}
+
+type UpdateSiteChunkCallback func(chunk UpdateSiteChunk) error
+
+type UpdateSiteListRer interface {
+	// UpdateSiteListR recursively lists entries starting from dir and emits
+	// incrementally paged chunks for update-site specific consumers.
+	ListRForUpdateSite(ctx context.Context, dir model.Obj, args model.ListArgs, maxDepth int, callback UpdateSiteChunkCallback) error
+}
+
 type GetRooter interface {
 	GetRoot(ctx context.Context) (model.Obj, error)
 }
