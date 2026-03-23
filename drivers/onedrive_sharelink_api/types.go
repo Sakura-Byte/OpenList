@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/thumbnail"
 )
 
 type Host struct {
@@ -49,8 +50,10 @@ type Object struct {
 
 func fileToObj(f File, parentID string) *Object {
 	thumb := ""
+	var thumbExpiry *time.Time
 	if len(f.Thumbnails) > 0 {
 		thumb = f.Thumbnails[0].Medium.Url
+		thumbExpiry, _ = thumbnail.ParseSharePointThumbnailExpiry(thumb)
 	}
 	return &Object{
 		ObjThumb: model.ObjThumb{
@@ -61,7 +64,7 @@ func fileToObj(f File, parentID string) *Object {
 				Modified: f.FileSystemInfo.LastModifiedDateTime,
 				IsFolder: f.File == nil,
 			},
-			Thumbnail: model.Thumbnail{Thumbnail: thumb},
+			Thumbnail: model.Thumbnail{Thumbnail: thumb, ExpiresAt: thumbExpiry},
 			//Url:       model.Url{Url: f.Url},
 		},
 		ParentID: parentID,

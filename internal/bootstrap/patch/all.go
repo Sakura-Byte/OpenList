@@ -4,6 +4,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v3_24_0"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v3_32_0"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v3_41_0"
+	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v4_1_10"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v4_1_8"
 	"github.com/OpenListTeam/OpenList/v4/internal/bootstrap/patch/v4_1_9"
 )
@@ -45,6 +46,12 @@ var UpgradePatches = []VersionPatches{
 		Patches: []func(){
 			v4_1_9.EnableWebDavProxy,
 			v4_1_9.ResetSkipTlsVerify,
+		},
+	},
+	{
+		Version: "v4.1.10",
+		Patches: []func(){
+			v4_1_10.EnableThumbnailExpirationOverride,
 		},
 	},
 }

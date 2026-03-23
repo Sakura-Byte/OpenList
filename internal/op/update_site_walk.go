@@ -49,7 +49,7 @@ func WalkUpdateSitePublicChunks(ctx context.Context, rawPath string, maxDepth in
 						StorageDriver: storage.Config().Name,
 					}
 				}
-				entries = append(entries, makeUpdateSiteEntry(rawPath, obj, debug))
+				entries = append(entries, makeUpdateSiteEntry(rawPath, obj, debug, storage))
 			}
 			if err := onChunk(driver.UpdateSiteChunk{Entries: entries}); err != nil {
 				return err
@@ -66,7 +66,7 @@ func WalkUpdateSitePublicChunks(ctx context.Context, rawPath string, maxDepth in
 	if onChunk != nil {
 		entries := make([]driver.UpdateSiteEntry, 0, len(virtualFiles))
 		for _, obj := range virtualFiles {
-			entries = append(entries, makeUpdateSiteEntry(rawPath, obj, &driver.UpdateSiteEntryDebug{Engine: "virtual"}))
+			entries = append(entries, makeUpdateSiteEntry(rawPath, obj, &driver.UpdateSiteEntryDebug{Engine: "virtual"}, nil))
 		}
 		if err := onChunk(driver.UpdateSiteChunk{Entries: entries}); err != nil {
 			return err
@@ -161,7 +161,7 @@ func walkUpdateSiteStorageByListR(ctx context.Context, storage driver.Driver, li
 		}
 		entries := make([]driver.UpdateSiteEntry, 0, len(objs))
 		for _, obj := range objs {
-			entries = append(entries, makeUpdateSiteEntry(parent, obj, nil))
+			entries = append(entries, makeUpdateSiteEntry(parent, obj, nil, storage))
 		}
 		return onChunk(driver.UpdateSiteChunk{Entries: entries})
 	})
@@ -179,7 +179,7 @@ func walkUpdateSiteStorageByList(ctx context.Context, storage driver.Driver, act
 	if onChunk != nil && len(objs) > 0 {
 		entries := make([]driver.UpdateSiteEntry, 0, len(objs))
 		for _, obj := range objs {
-			entries = append(entries, makeUpdateSiteEntry(actualPath, obj, nil))
+			entries = append(entries, makeUpdateSiteEntry(actualPath, obj, nil, storage))
 		}
 		if err := onChunk(driver.UpdateSiteChunk{Entries: entries}); err != nil {
 			return err
@@ -204,8 +204,7 @@ func walkUpdateSiteStorageByList(ctx context.Context, storage driver.Driver, act
 	return nil
 }
 
-func makeUpdateSiteEntry(parentPath string, obj model.Obj, debug *driver.UpdateSiteEntryDebug) driver.UpdateSiteEntry {
-	thumb, _ := model.GetThumb(obj)
+func makeUpdateSiteEntry(parentPath string, obj model.Obj, debug *driver.UpdateSiteEntryDebug, storage driver.Driver) driver.UpdateSiteEntry {
 	return driver.UpdateSiteEntry{
 		VisiblePath: stdpath.Join(parentPath, obj.GetName()),
 		ParentPath:  parentPath,
@@ -213,7 +212,7 @@ func makeUpdateSiteEntry(parentPath string, obj model.Obj, debug *driver.UpdateS
 		IsDir:       obj.IsDir(),
 		Size:        obj.GetSize(),
 		Modified:    obj.ModTime(),
-		Thumb:       thumb,
+		Thumb:       thumbnailValueForObject(storage, obj),
 		Debug:       debug,
 	}
 }

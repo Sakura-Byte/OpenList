@@ -4,7 +4,6 @@ import (
 	"context"
 	stdpath "path"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -15,7 +14,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
@@ -69,6 +67,9 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 			model.SortFiles(files, storage.GetStorage().OrderBy, storage.GetStorage().OrderDirection)
 		}
 		model.ExtractFolder(files, storage.GetStorage().ExtractFolder)
+		now := time.Now()
+		overrideThumbExpiry := shouldOverrideThumbnailExpiration(storage)
+		files, cacheTTLCap, cacheable := normalizeThumbnailObjects(files, overrideThumbExpiry, now)
 
 		if !args.SkipHook {
 			// call hooks
@@ -79,35 +80,20 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 
 		if !storage.Config().NoCache {
 			if len(files) > 0 {
-				log.Debugf("set cache: %s => %+v", key, files)
-
-				ttl := storage.GetStorage().CacheExpiration
-
-				customCachePolicies := storage.GetStorage().CustomCachePolicies
-				if len(customCachePolicies) > 0 {
-					configPolicies := strings.Split(customCachePolicies, "\n")
-					for _, configPolicy := range configPolicies {
-						pattern, ttlstr, ok := strings.Cut(strings.TrimSpace(configPolicy), ":")
-						if !ok {
-							log.Warnf("Malformed custom cache policy entry: %s in storage %s for path %s. Expected format: pattern:ttl", configPolicy, storage.GetStorage().MountPath, path)
-							continue
-						}
-						if match, err1 := doublestar.Match(pattern, path); err1 != nil {
-							log.Warnf("Invalid glob pattern in custom cache policy: %s, error: %v", pattern, err1)
-							continue
-						} else if !match {
-							continue
-						}
-
-						if configTtl, err1 := strconv.ParseInt(ttlstr, 10, 64); err1 == nil {
-							ttl = int(configTtl)
-							break
-						}
+				if cacheable {
+					duration := resolveDirectoryCacheTTL(storage, path)
+					if cacheTTLCap != nil && *cacheTTLCap < duration {
+						duration = *cacheTTLCap
 					}
+					if duration > 0 {
+						log.Debugf("set cache: %s => %+v", key, files)
+						Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), duration)
+					} else {
+						Cache.DeleteDirectory(storage, path)
+					}
+				} else {
+					Cache.DeleteDirectory(storage, path)
 				}
-
-				duration := time.Minute * time.Duration(ttl)
-				Cache.dirCache.SetWithTTL(key, newDirectoryCache(files), duration)
 			} else {
 				log.Debugf("del cache: %s", key)
 				Cache.deleteDirectoryTree(key)
@@ -141,25 +127,25 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 			if err != nil {
 				return nil, errors.WithMessage(err, "failed get root obj")
 			}
-			return rootObj, nil
+			return normalizeThumbnailForResponse(storage, rootObj), nil
 		}
 		switch r := storage.(type) {
 		case driver.IRootId:
-			return &model.Object{
+			return normalizeThumbnailForResponse(storage, &model.Object{
 				ID:       r.GetRootId(),
 				Name:     RootName,
 				Modified: storage.GetStorage().Modified,
 				IsFolder: true,
 				Mask:     model.Locked,
-			}, nil
+			}), nil
 		case driver.IRootPath:
-			return &model.Object{
+			return normalizeThumbnailForResponse(storage, &model.Object{
 				Path:     r.GetRootPath(),
 				Name:     RootName,
 				Modified: storage.GetStorage().Modified,
 				Mask:     model.Locked,
 				IsFolder: true,
-			}, nil
+			}), nil
 		}
 		return nil, errors.New("please implement GetRooter or IRootPath or IRootId interface")
 	}
@@ -186,7 +172,7 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 	if g, ok := storage.(driver.Getter); ok {
 		obj, err := g.Get(ctx, path)
 		if err == nil {
-			return obj, nil
+			return normalizeThumbnailForResponse(storage, obj), nil
 		}
 		if !errs.IsNotImplementError(err) && !errs.IsNotSupportError(err) {
 			return nil, errors.WithMessage(err, "failed to get obj")

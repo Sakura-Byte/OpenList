@@ -87,6 +87,13 @@ func getMainItems(config driver.Config) []driver.Item {
 			Required: false,
 			Help:     "The cache expiration rules for this storage",
 		})
+		items = append(items, driver.Item{
+			Name:     "thumbnail_expiration_override",
+			Type:     conf.TypeBool,
+			Default:  "true",
+			Required: true,
+			Help:     "Override directory cache expiration when thumbnail URLs are near expiry",
+		})
 	}
 	if config.MustProxy() {
 		items = append(items, driver.Item{

@@ -75,6 +75,10 @@ type Thumb interface {
 	Thumb() string
 }
 
+type ThumbExpirer interface {
+	ThumbExpiration() *time.Time
+}
+
 type SetPath interface {
 	SetPath(path string)
 }
@@ -168,6 +172,19 @@ func GetThumb(obj Obj) (thumb string, ok bool) {
 			obj = o.Unwrap()
 		default:
 			return
+		}
+	}
+}
+
+func GetThumbExpiration(obj Obj) (expiry *time.Time, ok bool) {
+	for {
+		switch o := obj.(type) {
+		case ThumbExpirer:
+			return o.ThumbExpiration(), true
+		case ObjUnwrap:
+			obj = o.Unwrap()
+		default:
+			return nil, false
 		}
 	}
 }

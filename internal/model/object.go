@@ -75,6 +75,7 @@ func (o *Object) GetObjMask() ObjMask {
 
 type Thumbnail struct {
 	Thumbnail string
+	ExpiresAt *time.Time
 }
 
 type Url struct {
@@ -89,9 +90,22 @@ func (t Thumbnail) Thumb() string {
 	return t.Thumbnail
 }
 
+func (t Thumbnail) ThumbExpiration() *time.Time {
+	return t.ExpiresAt
+}
+
 type ObjThumb struct {
 	Object
 	Thumbnail
+}
+
+type ObjThumbOverlay struct {
+	Obj
+	Thumbnail
+}
+
+func (o *ObjThumbOverlay) Unwrap() Obj {
+	return o.Obj
 }
 
 type ObjectURL struct {

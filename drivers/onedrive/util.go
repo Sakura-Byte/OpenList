@@ -371,6 +371,7 @@ func (d *Onedrive) scanUpdateSiteByDelta(ctx context.Context, dir model.Obj, max
 	sharedDirIDs := make(map[string]struct{})
 	unresolved := make([]File, 0)
 	sharedDirs := make([]model.Obj, 0)
+	overrideThumbExpiry := d.GetStorage().ThumbnailExpirationOverride
 	for nextLink != "" {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -380,7 +381,7 @@ func (d *Onedrive) scanUpdateSiteByDelta(ctx context.Context, dir model.Obj, max
 			return err
 		}
 		unresolved = append(unresolved, compactOnedriveDeltaItemsFirstSeen(files.Value)...)
-		resolved, nextUnresolved, nextSharedDirs, progressed := resolveOnedriveDeltaScanEntries("/", directoryID, unresolved, maxDepth, idToPath, seenIDs, sharedDirIDs)
+		resolved, nextUnresolved, nextSharedDirs, progressed := resolveOnedriveDeltaScanEntries("/", directoryID, unresolved, maxDepth, idToPath, seenIDs, sharedDirIDs, overrideThumbExpiry, time.Now())
 		unresolved = nextUnresolved
 		sharedDirs = append(sharedDirs, nextSharedDirs...)
 		if len(resolved) > 0 {
@@ -394,7 +395,7 @@ func (d *Onedrive) scanUpdateSiteByDelta(ctx context.Context, dir model.Obj, max
 		nextLink = files.NextLink
 	}
 	for {
-		resolved, nextUnresolved, nextSharedDirs, progressed := resolveOnedriveDeltaScanEntries("/", directoryID, unresolved, maxDepth, idToPath, seenIDs, sharedDirIDs)
+		resolved, nextUnresolved, nextSharedDirs, progressed := resolveOnedriveDeltaScanEntries("/", directoryID, unresolved, maxDepth, idToPath, seenIDs, sharedDirIDs, overrideThumbExpiry, time.Now())
 		unresolved = nextUnresolved
 		sharedDirs = append(sharedDirs, nextSharedDirs...)
 		if len(resolved) > 0 {
@@ -428,6 +429,7 @@ func (d *Onedrive) scanUpdateSiteByChildren(ctx context.Context, dir model.Obj, 
 		depth int
 	}
 	queue := []task{{obj: dir, depth: 0}}
+	overrideThumbExpiry := d.GetStorage().ThumbnailExpirationOverride
 	for len(queue) > 0 {
 		if utils.IsCanceled(ctx) {
 			return ctx.Err()
@@ -440,6 +442,7 @@ func (d *Onedrive) scanUpdateSiteByChildren(ctx context.Context, dir model.Obj, 
 		}
 		nextLink := d.childrenNextLink(parentPath)
 		nextDirs := make([]model.Obj, 0)
+		now := time.Now()
 		for {
 			files, err := d.requestChildrenPageWithRetry(ctx, nextLink)
 			if err != nil {
@@ -454,7 +457,6 @@ func (d *Onedrive) scanUpdateSiteByChildren(ctx context.Context, dir model.Obj, 
 						setter.SetPath(stdpath.Join(parentPath, raw.GetName()))
 					}
 				}
-				thumb, _ := model.GetThumb(obj)
 				entries = append(entries, driver.UpdateSiteEntry{
 					VisiblePath: obj.GetPath(),
 					ParentPath:  parentPath,
@@ -462,7 +464,7 @@ func (d *Onedrive) scanUpdateSiteByChildren(ctx context.Context, dir model.Obj, 
 					IsDir:       obj.IsDir(),
 					Size:        obj.GetSize(),
 					Modified:    obj.ModTime(),
-					Thumb:       thumb,
+					Thumb:       updateSiteThumbnailValue(obj, overrideThumbExpiry, now),
 					Debug: &driver.UpdateSiteEntryDebug{
 						Engine: engine,
 					},
@@ -549,7 +551,7 @@ func listRPathDepth(basePath, fullPath string) int {
 	return strings.Count(relPath, "/") + 1
 }
 
-func resolveOnedriveDeltaScanEntries(startPath, directoryID string, items []File, maxDepth int, idToPath map[string]string, seenIDs map[string]struct{}, sharedDirIDs map[string]struct{}) ([]driver.UpdateSiteEntry, []File, []model.Obj, bool) {
+func resolveOnedriveDeltaScanEntries(startPath, directoryID string, items []File, maxDepth int, idToPath map[string]string, seenIDs map[string]struct{}, sharedDirIDs map[string]struct{}, overrideThumbExpiry bool, now time.Time) ([]driver.UpdateSiteEntry, []File, []model.Obj, bool) {
 	resolved := make([]driver.UpdateSiteEntry, 0)
 	unresolved := make([]File, 0)
 	sharedDirs := make([]model.Obj, 0)
@@ -592,7 +594,6 @@ func resolveOnedriveDeltaScanEntries(startPath, directoryID string, items []File
 		}
 		obj := fileToObj(item, item.ParentReference.Id)
 		obj.Path = fullPath
-		thumb, _ := model.GetThumb(obj)
 		resolved = append(resolved, driver.UpdateSiteEntry{
 			VisiblePath: fullPath,
 			ParentPath:  parentPath,
@@ -600,7 +601,7 @@ func resolveOnedriveDeltaScanEntries(startPath, directoryID string, items []File
 			IsDir:       obj.IsDir(),
 			Size:        obj.GetSize(),
 			Modified:    obj.ModTime(),
-			Thumb:       thumb,
+			Thumb:       updateSiteThumbnailValue(obj, overrideThumbExpiry, now),
 			Debug: &driver.UpdateSiteEntryDebug{
 				Engine: "update_site_delta",
 			},
