@@ -174,6 +174,16 @@ func newFakeFile(path string, size int64, hash, thumb string, details *model.Sto
 	return obj
 }
 
+func newFakeDir(path string, size int64) model.Obj {
+	return &model.Object{
+		Name:     pathBase(path),
+		Path:     path,
+		Size:     size,
+		Modified: testModTime,
+		IsFolder: true,
+	}
+}
+
 func pathBase(path string) string {
 	if path == "/" {
 		return "root"
@@ -260,6 +270,16 @@ func findByName(t *testing.T, objs []model.Obj, name string) model.Obj {
 	}
 	t.Fatalf("object %s not found", name)
 	return nil
+}
+
+func countByName(objs []model.Obj, name string) int {
+	count := 0
+	for _, obj := range objs {
+		if obj.GetName() == name {
+			count++
+		}
+	}
+	return count
 }
 
 func TestAliasListKeepsPrimaryThumb(t *testing.T) {
@@ -469,5 +489,173 @@ func TestAliasListPreservesStorageDetails(t *testing.T) {
 	}
 	if gotDetails.TotalSpace != details.TotalSpace || gotDetails.UsedSpace != details.UsedSpace {
 		t.Fatalf("unexpected details: %+v", gotDetails)
+	}
+}
+
+func TestAliasListSumsReplicaDirectorySizes(t *testing.T) {
+	fixture := setupAliasFixture(t,
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/":     {newFakeDir("/docs", 10)},
+				"/docs": {newFakeFile("/docs/a.txt", 1, "hash-a", "", nil)},
+			},
+			get: map[string]model.Obj{
+				"/docs": newFakeDir("/docs", 10),
+			},
+		},
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/":     {newFakeDir("/docs", 20)},
+				"/docs": {newFakeFile("/docs/b.txt", 2, "hash-b", "", nil)},
+			},
+			get: map[string]model.Obj{
+				"/docs": newFakeDir("/docs", 20),
+			},
+		},
+		false, false,
+	)
+
+	objs, err := fs.List(context.Background(), fixture.aliasMount, &fs.ListArgs{})
+	if err != nil {
+		t.Fatalf("fs.List error: %v", err)
+	}
+
+	if count := countByName(objs, "docs"); count != 1 {
+		t.Fatalf("expected exactly one docs entry, got %d", count)
+	}
+	docs := findByName(t, objs, "docs")
+	if !docs.IsDir() {
+		t.Fatalf("expected docs to be a directory")
+	}
+	if docs.GetSize() != 30 {
+		t.Fatalf("expected merged docs size 30, got %d", docs.GetSize())
+	}
+}
+
+func TestAliasGetSumsReplicaDirectorySizes(t *testing.T) {
+	fixture := setupAliasFixture(t,
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/": {newFakeDir("/docs", 10)},
+			},
+			get: map[string]model.Obj{
+				"/docs": newFakeDir("/docs", 10),
+			},
+		},
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/": {newFakeDir("/docs", 20)},
+			},
+			get: map[string]model.Obj{
+				"/docs": newFakeDir("/docs", 20),
+			},
+		},
+		false, false,
+	)
+
+	obj, err := fs.Get(context.Background(), fixture.aliasMount+"/docs", &fs.GetArgs{})
+	if err != nil {
+		t.Fatalf("fs.Get error: %v", err)
+	}
+
+	if !obj.IsDir() {
+		t.Fatalf("expected docs to be a directory")
+	}
+	if obj.GetSize() != 30 {
+		t.Fatalf("expected merged docs size 30, got %d", obj.GetSize())
+	}
+}
+
+func TestAliasListReplicaDirectoryChildrenRemainUnioned(t *testing.T) {
+	fixture := setupAliasFixture(t,
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/":     {newFakeDir("/docs", 10)},
+				"/docs": {newFakeFile("/docs/a.txt", 1, "hash-a", "", nil)},
+			},
+			get: map[string]model.Obj{
+				"/docs": newFakeDir("/docs", 10),
+			},
+		},
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/":     {newFakeDir("/docs", 20)},
+				"/docs": {newFakeFile("/docs/b.txt", 2, "hash-b", "", nil)},
+			},
+			get: map[string]model.Obj{
+				"/docs": newFakeDir("/docs", 20),
+			},
+		},
+		false, false,
+	)
+
+	objs, err := fs.List(context.Background(), fixture.aliasMount+"/docs", &fs.ListArgs{})
+	if err != nil {
+		t.Fatalf("fs.List error: %v", err)
+	}
+
+	if countByName(objs, "a.txt") != 1 || countByName(objs, "b.txt") != 1 {
+		t.Fatalf("expected children from both replicas, got %+v", objs)
+	}
+}
+
+func TestAliasDirectorySizeIgnoresMissingReplica(t *testing.T) {
+	fixture := setupAliasFixture(t,
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/": {newFakeDir("/docs", 10)},
+			},
+			get: map[string]model.Obj{
+				"/docs": newFakeDir("/docs", 10),
+			},
+		},
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/": {},
+			},
+			get: map[string]model.Obj{},
+		},
+		false, false,
+	)
+
+	obj, err := fs.Get(context.Background(), fixture.aliasMount+"/docs", &fs.GetArgs{})
+	if err != nil {
+		t.Fatalf("fs.Get error: %v", err)
+	}
+
+	if obj.GetSize() != 10 {
+		t.Fatalf("expected docs size 10 with one missing replica, got %d", obj.GetSize())
+	}
+}
+
+func TestAliasReplicaFileSizeKeepsPrimaryValue(t *testing.T) {
+	fixture := setupAliasFixture(t,
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/": {newFakeFile("/movie.mkv", 100, "hash-movie", "", nil)},
+			},
+			get: map[string]model.Obj{
+				"/movie.mkv": newFakeFile("/movie.mkv", 100, "hash-movie", "", nil),
+			},
+		},
+		&fakeThumbData{
+			list: map[string][]model.Obj{
+				"/": {newFakeFile("/movie.mkv", 200, "hash-movie-2", "", nil)},
+			},
+			get: map[string]model.Obj{
+				"/movie.mkv": newFakeFile("/movie.mkv", 200, "hash-movie-2", "", nil),
+			},
+		},
+		false, false,
+	)
+
+	objs, err := fs.List(context.Background(), fixture.aliasMount, &fs.ListArgs{})
+	if err != nil {
+		t.Fatalf("fs.List error: %v", err)
+	}
+
+	movie := findByName(t, objs, "movie.mkv")
+	if movie.GetSize() != 100 {
+		t.Fatalf("expected file size to stay on primary replica (100), got %d", movie.GetSize())
 	}
 }

@@ -123,39 +123,23 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 		if err != nil {
 			continue
 		}
-		mask := model.GetObjMask(obj) &^ model.Temp
-		if sub == "" {
-			// 根目录
-			mask |= model.Locked | model.Virtual
-		}
-		obj = wrapAliasViewObj(obj, rawPath, d.rawPathToAliasPath(rawPath), mask)
-		if d.ProviderPassThrough && !obj.IsDir() {
-			if storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{}); err == nil {
-				obj = &providerOverlay{Obj: obj, provider: storage.Config().Name}
-			}
-		}
+		obj = d.wrapAliasObj(obj, rawPath, sub)
 
 		remainingRoots := roots[idx+1:]
 		remainingObjs := make([]model.Obj, 0, len(remainingRoots))
-		needThumb := !obj.IsDir() && !hasThumb(obj)
+		isDir := obj.IsDir()
+		needThumb := !isDir && !hasThumb(obj)
 		for _, nextRoot := range remainingRoots {
 			nextRawPath := stdpath.Join(nextRoot, sub)
-			if needThumb {
+			if isDir || needThumb {
 				nextObj, err := fs.Get(ctx, nextRawPath, &fs.GetArgs{NoLog: true})
-				if err == nil {
-					nextMask := model.GetObjMask(nextObj) &^ model.Temp
-					if sub == "" {
-						nextMask |= model.Locked | model.Virtual
-					}
-					nextObj = wrapAliasViewObj(nextObj, nextRawPath, d.rawPathToAliasPath(nextRawPath), nextMask)
-					if d.ProviderPassThrough && !nextObj.IsDir() {
-						if storage, err := fs.GetStorage(nextRawPath, &fs.GetStoragesArgs{}); err == nil {
-							nextObj = &providerOverlay{Obj: nextObj, provider: storage.Config().Name}
-						}
-					}
+				if err == nil && (!isDir || nextObj.IsDir()) {
+					nextObj = d.wrapAliasObj(nextObj, nextRawPath, sub)
 					remainingObjs = append(remainingObjs, nextObj)
-					obj = borrowThumb(obj, nextObj)
-					needThumb = !hasThumb(obj)
+					if needThumb {
+						obj = borrowThumb(obj, nextObj)
+						needThumb = !hasThumb(obj)
+					}
 					continue
 				}
 			}
@@ -180,8 +164,6 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		return d.listRoot(ctx, args.WithStorageDetails && d.DetailsPassThrough, args.Refresh), nil
 	}
 
-	// 因为alias是NoCache且Get方法不会返回NotSupport或NotImplement错误
-	// 所以这里对象不会传回到alias，也就不需要返回BalancedObjs了
 	objMap := make(map[string]model.Obj)
 	for _, dir := range dirs {
 		if dir == nil {
@@ -198,11 +180,10 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		}
 		for _, obj := range tmp {
 			name := obj.GetName()
-			mask := model.GetObjMask(obj) &^ model.Temp
 			rawPath := stdpath.Join(dirPath, name)
-			objRet := wrapAliasViewObj(obj, rawPath, d.rawPathToAliasPath(rawPath), mask)
+			objRet := d.wrapAliasObj(obj, rawPath, name)
 			if existing, exists := objMap[name]; exists {
-				objMap[name] = borrowThumb(existing, objRet)
+				objMap[name] = mergeAliasListObj(existing, objRet)
 				continue
 			}
 			objMap[name] = objRet
@@ -222,6 +203,30 @@ func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([
 		}
 	}
 	return objs, nil
+}
+
+func (d *Alias) wrapAliasObj(obj model.Obj, rawPath, sub string) model.Obj {
+	mask := model.GetObjMask(obj) &^ model.Temp
+	if sub == "" {
+		mask |= model.Locked | model.Virtual
+	}
+	obj = wrapAliasViewObj(obj, rawPath, d.rawPathToAliasPath(rawPath), mask)
+	if d.ProviderPassThrough && !obj.IsDir() {
+		if storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{}); err == nil {
+			obj = &providerOverlay{Obj: obj, provider: storage.Config().Name}
+		}
+	}
+	return obj
+}
+
+func mergeAliasListObj(existing, incoming model.Obj) model.Obj {
+	if existing.IsDir() && incoming.IsDir() {
+		if dirs, ok := existing.(BalancedObjs); ok {
+			return append(dirs, incoming)
+		}
+		return BalancedObjs{existing, incoming}
+	}
+	return borrowThumb(existing, incoming)
 }
 
 func (d *Alias) rawPathToAliasPath(rawPath string) string {

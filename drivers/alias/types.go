@@ -38,7 +38,20 @@ var (
 type BalancedObjs []model.Obj
 
 func (b BalancedObjs) GetSize() int64 {
-	return b[0].GetSize()
+	if len(b) == 0 || b[0] == nil {
+		return 0
+	}
+	if !b[0].IsDir() {
+		return b[0].GetSize()
+	}
+	var total int64
+	for _, obj := range b {
+		if obj == nil || !obj.IsDir() {
+			continue
+		}
+		total += obj.GetSize()
+	}
+	return total
 }
 
 func (b BalancedObjs) ModTime() time.Time {
