@@ -62,7 +62,7 @@ func TestProxyFairQueueUserConcurrency429(t *testing.T) {
 		t.Fatalf("fast acquire: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = ratelimit.FairQueueRelease(slotToken, hitAt)
+		_ = ratelimit.FairQueueRelease(slotToken, hitAt, ratelimit.ReleaseReasonStreamEnd)
 		time.Sleep(20 * time.Millisecond)
 	})
 

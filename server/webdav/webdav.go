@@ -282,7 +282,7 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	}
 	if slotToken != "" {
 		defer func() {
-			_ = ratelimit.FairQueueRelease(slotToken, hitAt)
+			_ = ratelimit.FairQueueRelease(slotToken, hitAt, ratelimit.ReleaseReasonStreamEnd)
 		}()
 	}
 	err = common.Proxy(w, r, link, fi)

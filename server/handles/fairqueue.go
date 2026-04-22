@@ -21,16 +21,21 @@ type fairQueueAcquireReq struct {
 }
 
 type fairQueuePollReq struct {
-	QueryToken string `json:"queryToken" binding:"required"`
+	WaitToken string `json:"waitToken" binding:"required"`
 }
 
-type fairQueueCancelReq struct {
-	QueryToken string `json:"queryToken"`
+type fairQueueAbandonReq struct {
+	WaitToken string `json:"waitToken" binding:"required"`
+}
+
+type fairQueueActivateReq struct {
+	SlotToken string `json:"slotToken" binding:"required"`
 }
 
 type fairQueueReleaseReq struct {
 	SlotToken       string `json:"slotToken" binding:"required"`
 	HitUpstreamAtMs int64  `json:"hitUpstreamAtMs"`
+	Reason          string `json:"reason" binding:"required"`
 }
 
 func resolveFairQueueUser(path, ip string, req fairQueueAcquireReq) (*model.User, error) {
@@ -48,6 +53,18 @@ func resolveFairQueueUser(path, ip string, req fairQueueAcquireReq) (*model.User
 		return op.GetUserByName(req.Username)
 	}
 	return nil, nil
+}
+
+func isValidFairQueueReleaseReason(reason ratelimit.FairQueueReleaseReason) bool {
+	switch reason {
+	case ratelimit.ReleaseReasonStreamEnd,
+		ratelimit.ReleaseReasonClientAbort,
+		ratelimit.ReleaseReasonUpstreamErr,
+		ratelimit.ReleaseReasonWorkerClean:
+		return true
+	default:
+		return false
+	}
 }
 
 func FairQueueAcquire(c *gin.Context) {
@@ -89,7 +106,7 @@ func FairQueuePoll(c *gin.Context) {
 		return
 	}
 
-	res, err := ratelimit.FairQueuePoll(req.QueryToken)
+	res, err := ratelimit.FairQueuePoll(req.WaitToken)
 	if err != nil {
 		common.ErrorResp(c, err, http.StatusBadRequest)
 		return
@@ -97,21 +114,30 @@ func FairQueuePoll(c *gin.Context) {
 	common.SuccessResp(c, res)
 }
 
-func FairQueueCancel(c *gin.Context) {
-	var req fairQueueCancelReq
+func FairQueueAbandon(c *gin.Context) {
+	var req fairQueueAbandonReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ErrorResp(c, err, http.StatusBadRequest)
 		return
 	}
-	if req.QueryToken == "" {
-		common.SuccessResp(c, gin.H{"result": "noop"})
-		return
-	}
-	if ratelimit.FairQueueCancel(req.QueryToken) {
-		common.SuccessResp(c, gin.H{"result": "canceled"})
+	if ratelimit.FairQueueAbandon(req.WaitToken) {
+		common.SuccessResp(c, gin.H{"result": "abandoned"})
 		return
 	}
 	common.SuccessResp(c, gin.H{"result": "gone"})
+}
+
+func FairQueueActivate(c *gin.Context) {
+	var req fairQueueActivateReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ErrorResp(c, err, http.StatusBadRequest)
+		return
+	}
+	if err := ratelimit.FairQueueActivate(req.SlotToken); err != nil {
+		common.ErrorResp(c, err, http.StatusConflict)
+		return
+	}
+	common.SuccessResp(c, gin.H{"result": "activated"})
 }
 
 func FairQueueRelease(c *gin.Context) {
@@ -124,7 +150,12 @@ func FairQueueRelease(c *gin.Context) {
 	if req.HitUpstreamAtMs > 0 {
 		hitAt = time.UnixMilli(req.HitUpstreamAtMs)
 	}
-	if err := ratelimit.FairQueueRelease(req.SlotToken, hitAt); err != nil {
+	reason := ratelimit.FairQueueReleaseReason(req.Reason)
+	if !isValidFairQueueReleaseReason(reason) {
+		common.ErrorStrResp(c, "invalid fairqueue release reason", http.StatusBadRequest)
+		return
+	}
+	if err := ratelimit.FairQueueRelease(req.SlotToken, hitAt, reason); err != nil {
 		common.ErrorResp(c, err, http.StatusInternalServerError)
 		return
 	}

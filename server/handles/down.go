@@ -143,7 +143,7 @@ func proxy(c *gin.Context, link *model.Link, file model.Obj, proxyRange bool) {
 	}
 	if slotToken != "" {
 		defer func() {
-			_ = ratelimit.FairQueueRelease(slotToken, hitAt)
+			_ = ratelimit.FairQueueRelease(slotToken, hitAt, ratelimit.ReleaseReasonStreamEnd)
 		}()
 	}
 	Writer := &common.WrittenResponseWriter{ResponseWriter: c.Writer}

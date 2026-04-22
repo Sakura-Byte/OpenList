@@ -180,7 +180,8 @@ func admin(g *gin.RouterGroup) {
 	fairqueue := g.Group("/fairqueue")
 	fairqueue.POST("/acquire", handles.FairQueueAcquire)
 	fairqueue.POST("/poll", handles.FairQueuePoll)
-	fairqueue.POST("/cancel", handles.FairQueueCancel)
+	fairqueue.POST("/abandon", handles.FairQueueAbandon)
+	fairqueue.POST("/activate", handles.FairQueueActivate)
 	fairqueue.POST("/release", handles.FairQueueRelease)
 
 	// retain /admin/task API to ensure compatibility with legacy automation scripts
