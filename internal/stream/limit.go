@@ -32,6 +32,8 @@ var (
 	ClientUploadLimit   Limiter
 	ServerDownloadLimit Limiter
 	ServerUploadLimit   Limiter
+
+	LocalProxySingleThreadDownloadLimit func() Limiter
 )
 
 type RateLimitReader struct {

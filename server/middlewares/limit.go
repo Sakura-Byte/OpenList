@@ -40,13 +40,26 @@ func (w *ResponseWriterWrapper) Write(p []byte) (n int, err error) {
 
 func DownloadRateLimiter(limiter stream.Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Writer = &ResponseWriterWrapper{
-			ResponseWriter: c.Writer,
-			WrapWriter: &stream.RateLimitWriter{
-				Writer:  c.Writer,
+		writer := io.Writer(c.Writer)
+		if limiter != nil {
+			writer = &stream.RateLimitWriter{
+				Writer:  writer,
 				Limiter: limiter,
 				Ctx:     c,
-			},
+			}
+		}
+		if stream.LocalProxySingleThreadDownloadLimit != nil {
+			if localProxyLimiter := stream.LocalProxySingleThreadDownloadLimit(); localProxyLimiter != nil {
+				writer = &stream.RateLimitWriter{
+					Writer:  writer,
+					Limiter: localProxyLimiter,
+					Ctx:     c,
+				}
+			}
+		}
+		c.Writer = &ResponseWriterWrapper{
+			ResponseWriter: c.Writer,
+			WrapWriter:     writer,
 		}
 		c.Next()
 	}

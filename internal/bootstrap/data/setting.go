@@ -248,6 +248,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.StreamMaxClientUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerDownloadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
 		{Key: conf.StreamMaxServerUploadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE},
+		{Key: conf.LocalProxyMaxSingleThreadDownloadSpeed, Value: "-1", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Max download speed per local proxy output thread, in KB/s (<=0 means unlimited)"},
 		{Key: conf.UserDefaultDownloadConcurrency, Value: "3", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Default concurrent downloads for non-guest users (0 means unlimited)"},
 		{Key: conf.UserDefaultDownloadRPS, Value: "3", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Default download requests per second for non-guest users"},
 		{Key: conf.UserDefaultListRPS, Value: "5", Type: conf.TypeNumber, Group: model.TRAFFIC, Flag: model.PRIVATE, Help: "Default list requests per second for non-guest users"},

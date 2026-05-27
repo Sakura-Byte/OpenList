@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -46,9 +47,30 @@ func initLimiter(limiter *stream.Limiter, s string) {
 	})
 }
 
+func initLocalProxySingleThreadDownloadLimit() {
+	var limitKB atomic.Int64
+	limitKB.Store(int64(setting.GetInt(conf.LocalProxyMaxSingleThreadDownloadSpeed, -1)))
+
+	stream.LocalProxySingleThreadDownloadLimit = func() stream.Limiter {
+		limit := limitKB.Load()
+		if limit <= 0 {
+			return nil
+		}
+		burst := int(limit) * 1024
+		return blockBurstLimiter{
+			Limiter: rate.NewLimiter(rate.Limit(burst), burst),
+		}
+	}
+
+	op.RegisterSettingChangingCallback(func() {
+		limitKB.Store(int64(setting.GetInt(conf.LocalProxyMaxSingleThreadDownloadSpeed, -1)))
+	})
+}
+
 func InitStreamLimit() {
 	initLimiter(&stream.ClientDownloadLimit, conf.StreamMaxClientDownloadSpeed)
 	initLimiter(&stream.ClientUploadLimit, conf.StreamMaxClientUploadSpeed)
 	initLimiter(&stream.ServerDownloadLimit, conf.StreamMaxServerDownloadSpeed)
 	initLimiter(&stream.ServerUploadLimit, conf.StreamMaxServerUploadSpeed)
+	initLocalProxySingleThreadDownloadLimit()
 }
