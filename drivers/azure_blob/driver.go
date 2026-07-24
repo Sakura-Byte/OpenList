@@ -2,6 +2,7 @@ package azure_blob
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"path"
@@ -12,10 +13,13 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
+	log "github.com/sirupsen/logrus"
 )
 
 // Azure Blob Storage based on the blob APIs
@@ -85,6 +89,9 @@ func (d *AzureBlob) Drop(ctx context.Context) error {
 // List retrieves blobs and directories under the specified path.
 func (d *AzureBlob) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	prefix := ensureTrailingSlash(dir.GetPath())
+	if prefix == "/" {
+		prefix = ""
+	}
 
 	pager := d.containerClient.NewListBlobsHierarchyPager("/", &container.ListBlobsHierarchyOptions{
 		Prefix: &prefix,
@@ -100,10 +107,11 @@ func (d *AzureBlob) List(ctx context.Context, dir model.Obj, args model.ListArgs
 		// Process directories
 		for _, blobPrefix := range page.Segment.BlobPrefixes {
 			objs = append(objs, &model.Object{
-				Name:     path.Base(strings.TrimSuffix(*blobPrefix.Name, "/")),
-				Path:     *blobPrefix.Name,
-				Modified: *blobPrefix.Properties.LastModified,
-				Ctime:    *blobPrefix.Properties.CreationTime,
+				Name: path.Base(strings.TrimSuffix(*blobPrefix.Name, "/")),
+				Path: *blobPrefix.Name,
+				// Azure does not support properties now.
+				//Modified: *blobPrefix.Properties.LastModified,
+				//Ctime:    *blobPrefix.Properties.CreationTime,
 				IsFolder: true,
 			})
 		}
@@ -278,6 +286,26 @@ func (d *AzureBlob) Put(ctx context.Context, dstDir model.Obj, stream model.File
 
 	// Determine optimal upload options based on file size
 	options := optimizedUploadOptions(stream.GetSize())
+
+	// Preserve the file content type for direct Azure Blob downloads.
+	contentType := stream.GetMimetype()
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	options.HTTPHeaders = &blob.HTTPHeaders{
+		BlobContentType: &contentType,
+	}
+
+	// Preserve the MD5 checksum when it is available.
+	md5Hex := stream.GetHash().GetHash(utils.MD5)
+	if md5Hex != "" {
+		md5, err := hex.DecodeString(md5Hex)
+		if err == nil && len(md5) == 16 {
+			options.HTTPHeaders.BlobContentMD5 = md5
+		} else {
+			log.Warnf("Invalid MD5 hash: %s, error: %v", md5Hex, err)
+		}
+	}
 
 	// Track upload progress
 	progressTracker := &progressTracker{

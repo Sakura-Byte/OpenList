@@ -63,6 +63,7 @@ type User struct {
 	//   12: can read archives
 	//   13: can decompress archives
 	//   14: can share
+	//   15: can customize share id
 	Permission          int32    `json:"permission"`
 	DownloadRPS         *float64 `json:"download_rps" gorm:"default:null"`
 	ListRPS             *float64 `json:"list_rps" gorm:"default:null"`
@@ -128,11 +129,19 @@ func (u *User) CanAddOfflineDownloadTasks() bool {
 }
 
 func CanWrite(permission int32) bool {
-	return (permission>>3)&1 == 1
+	return CanWriteContent(permission)
 }
 
 func (u *User) CanWrite() bool {
-	return CanWrite(u.Permission)
+	return u.CanWriteContent()
+}
+
+func CanWriteContent(permission int32) bool {
+	return (permission>>3)&1 == 1
+}
+
+func (u *User) CanWriteContent() bool {
+	return CanWriteContent(u.Permission)
 }
 
 func CanRename(permission int32) bool {
@@ -221,6 +230,14 @@ func CanShare(permission int32) bool {
 
 func (u *User) CanShare() bool {
 	return CanShare(u.Permission)
+}
+
+func CanCustomizeShareID(permission int32) bool {
+	return (permission>>15)&1 == 1
+}
+
+func (u *User) CanCustomizeShareID() bool {
+	return CanCustomizeShareID(u.Permission)
 }
 
 func (u *User) JoinPath(reqPath string) (string, error) {

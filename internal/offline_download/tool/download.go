@@ -54,6 +54,7 @@ func (t *DownloadTask) Run() error {
 		t.Signal = nil
 	}()
 	gid, err := t.tool.AddURL(&AddUrlArgs{
+		Ctx:     t.Ctx(),
 		Url:     t.Url,
 		UID:     t.ID,
 		TempDir: t.TempDir,
@@ -147,10 +148,10 @@ func (t *DownloadTask) Update() (bool, error) {
 	if err != nil {
 		t.callStatusRetried++
 		log.Errorf("failed to get status of %s, retried %d times", t.ID, t.callStatusRetried)
+		if t.callStatusRetried > 5 {
+			return true, errors.Errorf("failed to get status of %s, retried %d times", t.ID, t.callStatusRetried)
+		}
 		return false, nil
-	}
-	if t.callStatusRetried > 5 {
-		return true, errors.Errorf("failed to get status of %s, retried %d times", t.ID, t.callStatusRetried)
 	}
 	t.callStatusRetried = 0
 	t.SetProgress(info.Progress)

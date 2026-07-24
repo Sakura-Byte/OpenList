@@ -1,13 +1,13 @@
 name: "Feature Request"
 description: Feature Request / Enhancement
-title: "[Feature] Please change the title to your feature name"
+title: "[Feature] Please modify the title to your feature name"
 labels: [enhancement]
 body:
   - type: checkboxes
     attributes:
       label: Please confirm the following
       description: |
-        You must check all the following, otherwise your request may be closed directly.
+        You must read, check, confirm, and agree to all the following, otherwise your request may be closed directly.
         Or you can go to the [discussions](https://github.com/OpenListTeam/OpenList/discussions).
       options:
         - label: |
@@ -28,6 +28,8 @@ body:
             I confirm this feature has not been implemented yet.
         - label: |
             I confirm this feature is reasonable and has general demand, not just my personal need.
+        - label: |
+            I have not read these checkboxes and therefore I just ticked them all, Please close this issue.
   - type: textarea
     id: feature-description
     attributes:
@@ -46,3 +48,9 @@ body:
       label: Additional Information
       description: |
         Any other context or screenshots related to this feature request, or information you find helpful.
+  - type: textarea
+    id: aigenerated
+    attributes:
+      label: AI Generated Content (optional)
+      description: |
+        If this request was submitted with the assistance of an AI, please provide the complete chat log, including information about the model used.
