@@ -47,16 +47,23 @@ func CanWriteContentBypassUserPerms(meta *model.Meta, path string) bool {
 	return MetaCoversPath(meta.Path, path, meta.WSub)
 }
 
-func CanAccess(user *model.User, meta *model.Meta, reqPath string, password string) bool {
-	// if the reqPath is in hide (only can check the nearest meta) and user can't see hides, can't access
+// IsHidden reports whether the supplied metadata hides the path from the user.
+func IsHidden(user *model.User, meta *model.Meta, reqPath string) bool {
 	if meta != nil && !user.CanSeeHides() && meta.Hide != "" &&
 		MetaCoversPath(meta.Path, path.Dir(reqPath), meta.HSub) { // the meta should apply to the parent of current path
 		for hide := range strings.SplitSeq(meta.Hide, "\n") {
 			re := regexp2.MustCompile(hide, regexp2.None)
 			if isMatch, _ := re.MatchString(path.Base(reqPath)); isMatch {
-				return false
+				return true
 			}
 		}
+	}
+	return false
+}
+
+func CanAccess(user *model.User, meta *model.Meta, reqPath string, password string) bool {
+	if IsHidden(user, meta, reqPath) {
+		return false
 	}
 	if !CanRead(user, meta, reqPath) {
 		return false

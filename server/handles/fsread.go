@@ -33,6 +33,26 @@ type DirReq struct {
 	ForceRoot bool   `json:"force_root" form:"force_root"`
 }
 
+func canBrowse(c *gin.Context, user *model.User, meta *model.Meta, reqPath, password string) bool {
+	if common.CanAccess(user, meta, reqPath, password) {
+		return true
+	}
+	if common.IsHidden(user, meta, reqPath) {
+		common.ErrorResp(c, errs.ObjectNotFound, 404)
+	} else {
+		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
+	}
+	return false
+}
+
+func browseError(c *gin.Context, err error) {
+	if errs.IsNotFoundError(err) {
+		common.ErrorResp(c, errs.ObjectNotFound, 404)
+		return
+	}
+	common.ErrorResp(c, err, 500)
+}
+
 type ObjResp struct {
 	Name         string                     `json:"name"`
 	Size         int64                      `json:"size"`
@@ -90,8 +110,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		return
 	}
 	common.GinAppendValues(c, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
-		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
+	if !canBrowse(c, user, meta, reqPath, req.Password) {
 		return
 	}
 	canWriteContentAtPath := common.CanWrite(user, meta, reqPath) && (user.CanWriteContent() || common.CanWriteContentBypassUserPerms(meta, reqPath))
@@ -104,7 +123,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		WithStorageDetails: !user.IsGuest() && !setting.GetBool(conf.HideStorageDetails),
 	})
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		browseError(c, err)
 		return
 	}
 	total, objs := pagination(objs, &req.PageReq)
@@ -158,13 +177,12 @@ func FsDirs(c *gin.Context) {
 		return
 	}
 	common.GinAppendValues(c, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
-		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
+	if !canBrowse(c, user, meta, reqPath, req.Password) {
 		return
 	}
 	objs, err := fs.List(c.Request.Context(), reqPath, &fs.ListArgs{})
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		browseError(c, err)
 		return
 	}
 	dirs := filterDirs(objs)
@@ -298,15 +316,14 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 		return
 	}
 	common.GinAppendValues(c, conf.MetaKey, meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
-		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
+	if !canBrowse(c, user, meta, reqPath, req.Password) {
 		return
 	}
 	obj, err := fs.Get(c.Request.Context(), reqPath, &fs.GetArgs{
 		WithStorageDetails: !user.IsGuest() && !setting.GetBool(conf.HideStorageDetails),
 	})
 	if err != nil {
-		common.ErrorResp(c, err, 500)
+		browseError(c, err)
 		return
 	}
 	var rawURL string
