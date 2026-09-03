@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -47,24 +46,6 @@ func (d *AListV3) Init(ctx context.Context) error {
 		err = d.login()
 		if err != nil {
 			return err
-		}
-	}
-	// re-get the user info
-	_, _, err = d.request("/me", http.MethodGet, func(req *resty.Request) {
-		req.SetResult(&resp)
-	})
-	if err != nil {
-		return err
-	}
-	if utils.SliceContains(resp.Data.Role, model.GUEST) {
-		u := d.Address + "/api/public/settings"
-		res, err := base.RestyClient.R().Get(u)
-		if err != nil {
-			return err
-		}
-		allowMounted := utils.Json.Get(res.Body(), "data", conf.AllowMounted).ToString() == "true"
-		if !allowMounted {
-			return fmt.Errorf("the site does not allow mounted")
 		}
 	}
 	return err
