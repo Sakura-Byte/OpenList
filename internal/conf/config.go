@@ -6,6 +6,9 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils/random"
 )
 
+const DefaultUserAgent = "Mozilla/5.0 (Macintosh; Apple macOS 26_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/142.0.0.0 OpenList/425.6.30"
+const DefaultUserAgentNT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/142.0.0.0 OpenList/425.6.30"
+
 type Database struct {
 	Type        string `json:"type" env:"TYPE"`
 	Host        string `json:"host" env:"HOST"`
@@ -157,6 +160,8 @@ type Config struct {
 	MaxConnections        int            `json:"max_connections" env:"MAX_CONNECTIONS"`
 	MaxConcurrency        int            `json:"max_concurrency" env:"MAX_CONCURRENCY"`
 	TlsInsecureSkipVerify bool           `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
+	UserAgent             string         `json:"user_agent" env:"USER_AGENT"`
+	UserAgentNT           string         `json:"user_agent_nt" env:"USER_AGENT_NT"`
 	Tasks                 TasksConfig    `json:"tasks" envPrefix:"TASKS_"`
 	FairQueue             FairQueue      `json:"fair_queue" envPrefix:"FAIRQUEUE_"`
 	Cors                  Cors           `json:"cors" envPrefix:"CORS_"`
@@ -220,6 +225,8 @@ func DefaultConfig(dataDir string) *Config {
 		MaxConnections:        0,
 		MaxConcurrency:        64,
 		TlsInsecureSkipVerify: false,
+		UserAgent:             DefaultUserAgent,
+		UserAgentNT:           DefaultUserAgentNT,
 		Tasks: TasksConfig{
 			Download: TaskConfig{
 				Workers:  5,

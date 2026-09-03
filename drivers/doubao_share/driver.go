@@ -111,7 +111,7 @@ func (d *DoubaoShare) Link(ctx context.Context, file model.Obj, args model.LinkA
 		return &model.Link{
 			URL: downloadUrl,
 			Header: http.Header{
-				"User-Agent":          []string{UserAgent},
+				"User-Agent":          []string{base.UserAgentNT},
 				"Content-Disposition": []string{contentDisposition},
 			},
 		}, nil

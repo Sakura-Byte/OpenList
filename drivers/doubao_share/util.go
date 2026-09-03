@@ -43,7 +43,6 @@ const (
 	FileDataType  = "file"
 	ImgDataType   = "image"
 	VideoDataType = "video"
-	UserAgent     = base.UserAgentNT
 )
 
 func (d *DoubaoShare) request(path string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
@@ -52,7 +51,7 @@ func (d *DoubaoShare) request(path string, method string, callback base.ReqCallb
 
 	req.SetHeaders(map[string]string{
 		"Cookie":     d.Cookie,
-		"User-Agent": UserAgent,
+		"User-Agent": base.UserAgentNT,
 	})
 
 	req.SetQueryParams(map[string]string{

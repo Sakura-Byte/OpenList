@@ -60,7 +60,6 @@ const (
 	VideoDataType    = "video"
 	DefaultChunkSize = int64(5 * 1024 * 1024) // 5MB
 	MaxRetryAttempts = 3                      // 最大重试次数
-	UserAgent        = base.UserAgentNT
 	Region           = "cn-north-1"
 	UploadTimeout    = 3 * time.Minute
 )
@@ -243,7 +242,7 @@ func (d *Doubao) signRequest(req *resty.Request, method, tokenType, uploadUrl st
 func (d *Doubao) requestApi(url, method, tokenType string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	req := base.RestyClient.R()
 	req.SetHeaders(map[string]string{
-		"user-agent": UserAgent,
+		"user-agent": base.UserAgentNT,
 	})
 
 	if method == http.MethodPost {
@@ -479,7 +478,7 @@ func (d *Doubao) Upload(ctx context.Context, config *UploadConfig, dstDir model.
 		req.Header = map[string][]string{
 			"Referer":             {BaseURL + "/"},
 			"Origin":              {BaseURL},
-			"User-Agent":          {UserAgent},
+			"User-Agent":          {base.UserAgentNT},
 			"X-Storage-U":         {d.UserId},
 			"Authorization":       {storeInfo.Auth},
 			"Content-Type":        {"application/octet-stream"},
@@ -609,7 +608,7 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 				req.Header = map[string][]string{
 					"Referer":             {BaseURL + "/"},
 					"Origin":              {BaseURL},
-					"User-Agent":          {UserAgent},
+					"User-Agent":          {base.UserAgentNT},
 					"X-Storage-U":         {d.UserId},
 					"Authorization":       {storeInfo.Auth},
 					"Content-Type":        {"application/octet-stream"},
@@ -699,7 +698,7 @@ func (d *Doubao) uploadRequest(uploadUrl string, method string, storeInfo StoreI
 		"Host":          strings.Split(uploadUrl, "/")[2],
 		"Referer":       BaseURL + "/",
 		"Origin":        BaseURL,
-		"User-Agent":    UserAgent,
+		"User-Agent":    base.UserAgentNT,
 		"X-Storage-U":   d.UserId,
 		"Authorization": storeInfo.Auth,
 	})

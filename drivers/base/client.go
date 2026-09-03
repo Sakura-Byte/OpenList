@@ -18,10 +18,20 @@ var (
 
 var DefaultTimeout = time.Second * 30
 
-const UserAgent = "Mozilla/5.0 (Macintosh; Apple macOS 26_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/142.0.0.0 OpenList/425.6.30"
-const UserAgentNT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/142.0.0.0 OpenList/425.6.30"
+// Shared user agents are configured at startup, before storage initialization.
+var UserAgent = conf.DefaultUserAgent
+var UserAgentNT = conf.DefaultUserAgentNT
 
 func InitClient() {
+	UserAgent = conf.Conf.UserAgent
+	if UserAgent == "" {
+		UserAgent = conf.DefaultUserAgent
+	}
+	UserAgentNT = conf.Conf.UserAgentNT
+	if UserAgentNT == "" {
+		UserAgentNT = conf.DefaultUserAgentNT
+	}
+
 	NoRedirectClient = resty.New().SetRedirectPolicy(
 		resty.RedirectPolicyFunc(func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
