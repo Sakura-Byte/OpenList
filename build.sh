@@ -97,16 +97,43 @@ AssertStaticBinary() {
 }
 
 FetchWebRolling() {
-  pre_release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/tags/rolling\"")
-  pre_release_assets=$(echo "$pre_release_json" | jq -r '.assets[].browser_download_url')
-  
-  # There is no lite for rolling
-  pre_release_tar_url=$(echo "$pre_release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\.tar\.gz$")
+  local release_tag=""
+  local max_attempts=3
+  local attempt=1
+  local pre_release_json=""
+  local pre_release_assets=""
+  local pre_release_tar_url=""
 
-  curl -fsSL "$pre_release_tar_url" -o dist.tar.gz
-  rm -rf public/dist && mkdir -p public/dist
-  tar -zxvf dist.tar.gz -C public/dist
-  rm -rf dist.tar.gz
+  for release_tag in edge rolling; do
+    attempt=1
+    while [ "$attempt" -le "$max_attempts" ]; do
+      if pre_release_json=$(eval "curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 --max-time 15 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/tags/$release_tag\""); then
+        pre_release_assets=$(echo "$pre_release_json" | jq -r '.assets[].browser_download_url')
+
+        # There is no lite for the edge release.
+        pre_release_tar_url=$(echo "$pre_release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\.tar\.gz$" || true)
+        if [ -n "$pre_release_tar_url" ] && curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 --max-time 120 "$pre_release_tar_url" -o dist.tar.gz; then
+          rm -rf public/dist && mkdir -p public/dist
+          tar -zxvf dist.tar.gz -C public/dist
+          rm -rf dist.tar.gz
+          return 0
+        fi
+      fi
+
+      if [ "$attempt" -lt "$max_attempts" ]; then
+        echo "Waiting for frontend $release_tag release (attempt $attempt/$max_attempts)..." >&2
+        sleep 2
+      fi
+      attempt=$((attempt + 1))
+    done
+
+    if [ "$release_tag" = "edge" ]; then
+      echo "Frontend edge release is unavailable; falling back to rolling during migration..." >&2
+    fi
+  done
+
+  echo "Error: failed to download frontend edge or rolling release from $frontendRepo" >&2
+  return 1
 }
 
 FetchWebRelease() {
