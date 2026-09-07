@@ -73,7 +73,7 @@ func (d *AliyundriveOpen) uploadPart(ctx context.Context, r io.Reader, partInfo 
 	if err != nil {
 		return err
 	}
-	res, err := base.HttpClient.Do(req)
+	res, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}

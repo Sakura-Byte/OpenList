@@ -84,7 +84,7 @@ func (d *Github) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	d.client = base.NewRestyClient().
+	d.client = base.NewRestyFor(d).
 		SetHeader("Accept", "application/vnd.github.object+json").
 		SetHeader("X-GitHub-Api-Version", "2022-11-28").
 		SetLogger(log.StandardLogger()).
@@ -720,7 +720,7 @@ func (d *Github) putBlob(ctx context.Context, s model.FileStreamer, up driver.Up
 	}
 	req.ContentLength = length
 
-	res, err := base.HttpClient.Do(req)
+	res, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return "", err
 	}

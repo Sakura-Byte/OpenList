@@ -3,11 +3,13 @@ package ipfs
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 
 	shell "github.com/ipfs/go-ipfs-api"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
@@ -28,7 +30,14 @@ func (d *IPFS) GetAddition() driver.Additional {
 }
 
 func (d *IPFS) Init(ctx context.Context) error {
-	d.sh = shell.NewShell(d.Endpoint)
+	d.sh = shell.NewShellWithClient(d.Endpoint, base.RouteClient(d, base.APIClientFor(d), func(r *http.Request) bool {
+		switch r.URL.Path {
+		case "/api/v0/add", "/api/v0/cat", "/api/v0/get", "/api/v0/files/read", "/api/v0/files/write":
+			return true
+		default:
+			return false
+		}
+	}))
 	gateURL, err := url.Parse(d.Gateway)
 	if err != nil {
 		return err

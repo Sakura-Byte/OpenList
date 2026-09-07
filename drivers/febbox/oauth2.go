@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -17,6 +18,7 @@ type customTokenSource struct {
 	config       *clientcredentials.Config
 	ctx          context.Context
 	refreshToken string
+	client       *http.Client
 }
 
 func (c *customTokenSource) Token() (*oauth2.Token, error) {
@@ -37,7 +39,11 @@ func (c *customTokenSource) Token() (*oauth2.Token, error) {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := c.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -84,5 +90,6 @@ func (d *FebBox) initializeOAuth2Token(ctx context.Context, oauth2Config *client
 		config:       oauth2Config,
 		ctx:          ctx,
 		refreshToken: refreshToken,
+		client:       base.APIClientFor(d),
 	})
 }

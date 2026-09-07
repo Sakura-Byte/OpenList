@@ -21,7 +21,7 @@ const loginPath = "/user/session"
 
 func (d *CloudreveSharelink) request(method string, path string, callback base.ReqCallback, out interface{}) error {
 	u := d.Address + "/api/v3" + path
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"Cookie":     "cloudreve-session=" + d.Cookie,
 		"Accept":     "application/json, text/plain, */*",
@@ -114,7 +114,7 @@ func (d *CloudreveSharelink) doLogin(needCaptcha bool) error {
 		}
 		i := strings.Index(captcha, ",")
 		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(captcha[i+1:]))
-		vRes, err := base.RestyClient.R().SetMultipartField(
+		vRes, err := base.RestyFor(d).R().SetMultipartField(
 			"image", "validateCode.png", "image/png", dec).
 			Post(setting.GetStr(conf.OcrApi))
 		if err != nil {

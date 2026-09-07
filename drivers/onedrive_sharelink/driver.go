@@ -354,7 +354,7 @@ func (d *OnedriveSharelink) uploadContent(ctx context.Context, uploadURL string,
 		return err
 	}
 	req.ContentLength = file.GetSize()
-	resp, err := base.HttpClient.Do(req)
+	resp, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}
@@ -419,7 +419,7 @@ func (d *OnedriveSharelink) uploadSessionChunk(ctx context.Context, uploadURL st
 	if total > 0 {
 		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, start+size-1, total))
 	}
-	resp, err := base.HttpClient.Do(req)
+	resp, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}
@@ -479,7 +479,7 @@ func (d *OnedriveSharelink) doJSON(ctx context.Context, method, rawURL string, b
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return base.HttpClient.Do(req)
+	return base.APIClientFor(d).Do(req)
 }
 
 func (d *OnedriveSharelink) getValidDriveAccessToken(ctx context.Context) (string, error) {
@@ -515,7 +515,7 @@ func (d *OnedriveSharelink) refreshDriveContext(ctx context.Context) error {
 		return err
 	}
 	req.Header = cloneHeader(header)
-	resp, err := NewNoRedirectCLient().Do(req)
+	resp, err := NewNoRedirectClient(d).Do(req)
 	if err != nil {
 		return err
 	}
@@ -536,7 +536,7 @@ func (d *OnedriveSharelink) refreshDriveContextFromRedirect(ctx context.Context,
 		return err
 	}
 	req.Header = cloneHeader(header)
-	resp, err := base.HttpClient.Do(req)
+	resp, err := base.APIClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}
@@ -616,6 +616,7 @@ var _ driver.Driver = (*OnedriveSharelink)(nil)
 // rangeReadWithRefresh tries once with current headers, and if the response
 // looks invalid (error status or html login page), it refreshes headers and retries.
 func (d *OnedriveSharelink) rangeReadWithRefresh(ctx context.Context, url string, hr http_range.Range) (io.ReadCloser, error) {
+	ctx = net.WithHTTPClient(ctx, base.TransferClientFor(d))
 	tryOnce := func(header http.Header) (io.ReadCloser, error) {
 		h := cloneHeader(header)
 		if h == nil {
@@ -687,7 +688,7 @@ func (d *OnedriveSharelink) resolveDirectDownloadURL(ctx context.Context, file m
 		req.Header = http.Header{}
 	}
 
-	resp, err := NewNoRedirectCLient().Do(req)
+	resp, err := NewNoRedirectClient(d).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -733,7 +734,7 @@ func (d *OnedriveSharelink) resolveSPItemDownloadURL(ctx context.Context, spItem
 	}
 	req.Header.Set("Accept", "application/json;odata.metadata=minimal")
 
-	resp, err := NewNoRedirectCLient().Do(req)
+	resp, err := NewNoRedirectClient(d).Do(req)
 	if err != nil {
 		return "", err
 	}

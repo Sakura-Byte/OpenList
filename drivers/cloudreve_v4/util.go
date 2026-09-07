@@ -70,7 +70,7 @@ func (d *CloudreveV4) _request(method string, path string, callback base.ReqCall
 	}
 
 	u := d.Address + "/api/v4" + path
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"Accept":     "application/json, text/plain, */*",
 		"User-Agent": d.getUA(),
@@ -188,7 +188,7 @@ func (d *CloudreveV4) doLogin(needCaptcha bool) error {
 		loginBody["ticket"] = captcha.Ticket
 		i := strings.Index(captcha.Image, ",")
 		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(captcha.Image[i+1:]))
-		vRes, err := base.RestyClient.R().SetMultipartField(
+		vRes, err := base.RestyFor(d).R().SetMultipartField(
 			"image", "validateCode.png", "image/png", dec).
 			Post(setting.GetStr(conf.OcrApi))
 		if err != nil {
@@ -389,7 +389,7 @@ func (d *CloudreveV4) upLocal(ctx context.Context, file model.FileStreamer, u Fi
 					return true
 				}
 				var retryResp Resp
-				jErr := base.RestyClient.JSONUnmarshal(r.Body(), &retryResp)
+				jErr := base.RestyFor(d).JSONUnmarshal(r.Body(), &retryResp)
 				if jErr != nil {
 					return true
 				}
@@ -443,7 +443,7 @@ func (d *CloudreveV4) upRemote(ctx context.Context, file model.FileStreamer, u F
 				req.ContentLength = byteSize
 				req.Header.Set("Authorization", fmt.Sprint(credential))
 				req.Header.Set("User-Agent", d.getUA())
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}
@@ -512,7 +512,7 @@ func (d *CloudreveV4) upOneDrive(ctx context.Context, file model.FileStreamer, u
 				req.ContentLength = byteSize
 				req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, file.GetSize()))
 				req.Header.Set("User-Agent", d.getUA())
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}
@@ -580,7 +580,7 @@ func (d *CloudreveV4) upS3(ctx context.Context, file model.FileStreamer, u FileU
 				if s3Type == "ks3" {
 					req.Header.Set("Content-Type", "application/octet-stream")
 				}
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}
@@ -635,7 +635,7 @@ func (d *CloudreveV4) upS3(ctx context.Context, file model.FileStreamer, u FileU
 		req.Header.Set("Content-Type", "application/xml")
 	}
 	req.Header.Set("User-Agent", d.getUA())
-	res, err := base.HttpClient.Do(req)
+	res, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}

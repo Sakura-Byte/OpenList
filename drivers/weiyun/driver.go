@@ -49,7 +49,7 @@ func (d *WeiYun) Init(ctx context.Context) error {
 		d.uploadThread, d.UploadThread = 4, "4"
 	}
 
-	d.client = weiyunsdkgo.NewWeiYunClientWithRestyClient(base.NewRestyClient())
+	d.client = weiyunsdkgo.NewWeiYunClientWithRestyClient(base.NewRestyFor(d))
 	err := d.client.SetCookiesStr(d.Cookies).RefreshCtoken()
 	if err != nil {
 		return err

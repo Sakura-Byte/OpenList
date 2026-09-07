@@ -24,7 +24,7 @@ func (d *AliyundriveShare) refreshToken(ctx context.Context) error {
 	url := "https://auth.alipan.com/v2/account/token"
 	var resp base.TokenResp
 	var e ErrorResp
-	_, err = base.RestyClient.R().
+	_, err = base.RestyFor(d).R().
 		SetBody(base.Json{"refresh_token": d.RefreshToken, "grant_type": "refresh_token"}).
 		SetResult(&resp).
 		SetError(&e).
@@ -54,7 +54,7 @@ func (d *AliyundriveShare) getShareToken(ctx context.Context) error {
 	}
 	var e ErrorResp
 	var resp ShareTokenResp
-	_, err = base.RestyClient.R().
+	_, err = base.RestyFor(d).R().
 		SetResult(&resp).SetError(&e).SetBody(data).
 		Post("https://api.alipan.com/v2/share_link/get_share_token")
 	if err != nil {
@@ -69,7 +69,7 @@ func (d *AliyundriveShare) getShareToken(ctx context.Context) error {
 
 func (d *AliyundriveShare) request(ctx context.Context, limitTy limiterType, url, method string, callback base.ReqCallback) ([]byte, error) {
 	var e ErrorResp
-	req := base.RestyClient.R().
+	req := base.RestyFor(d).R().
 		SetError(&e).
 		SetHeader("content-type", "application/json").
 		SetHeader("Authorization", "Bearer\t"+d.AccessToken).
@@ -129,7 +129,7 @@ func (d *AliyundriveShare) getFiles(ctx context.Context, fileId string) ([]File,
 		}
 		var e ErrorResp
 		var resp ListResp
-		res, err := base.RestyClient.R().
+		res, err := base.RestyFor(d).R().
 			SetHeader("x-share-token", d.ShareToken).
 			SetHeader(CanaryHeaderKey, CanaryHeaderValue).
 			SetResult(&resp).SetError(&e).SetBody(data).

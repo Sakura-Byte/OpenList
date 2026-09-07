@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -362,7 +363,7 @@ func (d *BaiduPhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 					"uploadid": precreateResp.UploadID,
 					"app_id":   "16051585",
 				}
-				_, err = d.Post("https://c3.pcs.baidu.com/rest/2.0/pcs/superfile2", func(r *resty.Request) {
+				_, err = d.Request(base.TransferRestyFor(d), "https://c3.pcs.baidu.com/rest/2.0/pcs/superfile2", http.MethodPost, func(r *resty.Request) {
 					r.SetContext(ctx)
 					r.SetQueryParams(uploadParams)
 					r.SetFileReader("file", stream.GetName(),

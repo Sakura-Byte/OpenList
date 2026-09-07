@@ -63,8 +63,8 @@ func firstDownloadURL(resp downloadResp) (string, error) {
 	return resp.Data.OSSURLPreSignatureInfo.PreSignURLs[0], nil
 }
 
-func newClient() *resty.Client {
-	client := base.NewRestyClient()
+func newClient(d base.StorageProvider) *resty.Client {
+	client := base.NewRestyFor(d)
 	client.SetHeader("User-Agent", base.UserAgent)
 	return client
 }

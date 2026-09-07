@@ -3,7 +3,6 @@ package onedrive_sharelink_api
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -13,10 +12,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -26,23 +23,18 @@ import (
 	"golang.org/x/net/html"
 )
 
-func (d *OnedriveSharelinkAPI) NewNoRedirectCLient() *http.Client {
-	return &http.Client{
-		Timeout: time.Hour * 48,
-		Transport: &http.Transport{
-			Proxy:           http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
-		},
-		//no redirect
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+func (d *OnedriveSharelinkAPI) NewNoRedirectClient() *http.Client {
+	client := *base.APIClientFor(d)
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+	return &client
 }
+
+// NewNoRedirectCLient is kept for source compatibility; use NewNoRedirectClient.
+func (d *OnedriveSharelinkAPI) NewNoRedirectCLient() *http.Client { return d.NewNoRedirectClient() }
 
 func (d *OnedriveSharelinkAPI) getCookiesWithPassword(link, password string) (string, error) {
 	// Send GET request
-	resp, err := http.Get(link)
+	resp, err := d.NewNoRedirectClient().Get(link)
 	if err != nil {
 		return "", err
 	}
@@ -100,7 +92,7 @@ func (d *OnedriveSharelinkAPI) getCookiesWithPassword(link, password string) (st
 		"__VIEWSTATEENCRYPTED": []string{""},
 	}
 
-	client := d.NewNoRedirectCLient()
+	client := d.NewNoRedirectClient()
 	// Send the POST request,no redirect
 	resp, err = client.PostForm(newURL, data)
 	if err != nil {
@@ -166,7 +158,7 @@ func (d *OnedriveSharelinkAPI) getHeaders() (http.Header, error) {
 	header.Set("accept-language", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
 	if d.ShareLinkPassword == "" {
 		//no redirect client
-		clientNoDirect := d.NewNoRedirectCLient()
+		clientNoDirect := d.NewNoRedirectClient()
 		// create a request
 		req, err := http.NewRequest("GET", d.ShareLinkURL, nil)
 		if err != nil {
@@ -215,7 +207,7 @@ func (d *OnedriveSharelinkAPI) getHeaders() (http.Header, error) {
 
 func (d *OnedriveSharelinkAPI) GetRedirectUrl() (err error) {
 	//no redirect client
-	clientNoDirect := d.NewNoRedirectCLient()
+	clientNoDirect := d.NewNoRedirectClient()
 	// create a request
 	req, err := http.NewRequest("GET", d.ShareLinkURL, nil)
 	if err != nil {
@@ -258,7 +250,7 @@ func (d *OnedriveSharelinkAPI) GetRedirectUrl() (err error) {
 
 func (d *OnedriveSharelinkAPI) GetBaseUrl() error {
 	// Initialize HTTP client
-	clientNoDirect := d.NewNoRedirectCLient()
+	clientNoDirect := d.NewNoRedirectClient()
 
 	// Create new HTTP GET request with headers
 	req, err := http.NewRequest("GET", d.RedirectUrl, nil)
@@ -325,7 +317,7 @@ func (d *OnedriveSharelinkAPI) refreshToken() error {
 	return err
 }
 func (d *OnedriveSharelinkAPI) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.Header = d.Headers
 	//if method is not GET, set Authorization to Bearer
 	if method != "GET" {
@@ -460,7 +452,7 @@ func (d *OnedriveSharelinkAPI) upBig(ctx context.Context, dstDir model.Obj, stre
 		req.Header.Set("Content-Length", strconv.Itoa(int(byteSize)))
 		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, stream.GetSize()))
 		finish += byteSize
-		res, err := base.HttpClient.Do(req)
+		res, err := base.TransferClientFor(d).Do(req)
 		if err != nil {
 			return err
 		}

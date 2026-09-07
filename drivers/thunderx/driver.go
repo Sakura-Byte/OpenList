@@ -45,7 +45,7 @@ func (x *ThunderX) Init(ctx context.Context) (err error) {
 	if x.XunLeiXCommon == nil {
 		x.XunLeiXCommon = &XunLeiXCommon{
 			Common: &Common{
-				client:            base.NewRestyClient(),
+				client:            base.NewRestyFor(x),
 				Algorithms:        Algorithms,
 				DeviceID:          utils.GetMD5EncodeStr(x.Username + x.Password),
 				ClientID:          ClientID,
@@ -141,7 +141,7 @@ func (x *ThunderXExpert) Init(ctx context.Context) (err error) {
 		x.identity = identity
 		x.XunLeiXCommon = &XunLeiXCommon{
 			Common: &Common{
-				client: base.NewRestyClient(),
+				client: base.NewRestyFor(x),
 
 				DeviceID: func() string {
 					if len(x.DeviceID) != 32 {

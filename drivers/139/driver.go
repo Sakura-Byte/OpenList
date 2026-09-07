@@ -1025,7 +1025,7 @@ func (d *Yun139) Put(ctx context.Context, dstDir model.Obj, stream model.FileStr
 					req.Header.Set("rangeType", "0")
 					req.ContentLength = byteSize
 
-					res, doErr := base.HttpClient.Do(req)
+					res, doErr := base.TransferClientFor(d).Do(req)
 					if doErr != nil {
 						return doErr
 					}

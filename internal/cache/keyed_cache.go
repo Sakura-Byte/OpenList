@@ -1,9 +1,21 @@
 package cache
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
+
+func (c *KeyedCache[T]) DeleteTree(root string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	prefix := strings.TrimRight(root, "/") + "/"
+	for key := range c.entries {
+		if key == root || strings.HasPrefix(key, prefix) {
+			delete(c.entries, key)
+		}
+	}
+}
 
 type KeyedCache[T any] struct {
 	entries map[string]*CacheEntry[T]

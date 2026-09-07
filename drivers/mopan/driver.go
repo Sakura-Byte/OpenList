@@ -75,8 +75,8 @@ func (d *MoPan) Init(ctx context.Context) error {
 		}
 		return nil
 	}
-	d.client = mopan.NewMoClientWithRestyClient(base.NewRestyClient()).
-		SetRestyClient(base.RestyClient).
+	d.client = mopan.NewMoClientWithRestyClient(base.NewRestyFor(d)).
+		SetRestyClient(base.RestyFor(d)).
 		SetOnAuthorizationExpired(func(_ error) error {
 			err := login()
 			if err != nil {
@@ -139,7 +139,7 @@ func (d *MoPan) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 	}
 
 	data.DownloadUrl = strings.Replace(strings.ReplaceAll(data.DownloadUrl, "&amp;", "&"), "http://", "https://", 1)
-	res, err := base.NoRedirectClient.R().SetDoNotParseResponse(true).SetContext(ctx).Get(data.DownloadUrl)
+	res, err := base.NoRedirectFor(d).R().SetDoNotParseResponse(true).SetContext(ctx).Get(data.DownloadUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +322,7 @@ func (d *MoPan) Put(ctx context.Context, dstDir model.Obj, stream model.FileStre
 					return err
 				}
 				req.ContentLength = byteSize
-				resp, err := base.HttpClient.Do(req)
+				resp, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}

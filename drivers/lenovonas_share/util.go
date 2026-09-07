@@ -9,7 +9,7 @@ import (
 )
 
 func (d *LenovoNasShare) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"origin":      "https://siot-share.lenovo.com.cn",
 		"referer":     "https://siot-share.lenovo.com.cn/",

@@ -36,7 +36,7 @@ func getStrBetween(raw, start, end string) string {
 
 func (d *Terabox) resetJsToken() error {
 	u := d.base_url
-	res, err := base.RestyClient.R().SetHeaders(map[string]string{
+	res, err := base.RestyFor(d).R().SetHeaders(map[string]string{
 		"Cookie":           d.Cookie,
 		"Accept":           "application/json, text/plain, */*",
 		"Referer":          d.base_url,
@@ -56,7 +56,7 @@ func (d *Terabox) resetJsToken() error {
 }
 
 func (d *Terabox) request(rurl string, method string, callback base.ReqCallback, resp interface{}, noRetry ...bool) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"Cookie":           d.Cookie,
 		"Accept":           "application/json, text/plain, */*",
@@ -145,12 +145,32 @@ func (d *Terabox) post_multipart(
 	fileReader io.Reader,
 	resp interface{},
 ) ([]byte, error) {
-	return d.request(pathname, http.MethodPost, func(req *resty.Request) {
-		if params != nil {
-			req.SetQueryParams(params)
-		}
-		req.SetFileReader(fileFieldName, fileName, fileReader)
-	}, resp)
+	client := base.TransferRestyFor(d)
+	req := client.R().SetHeaders(map[string]string{
+		"Cookie":           d.Cookie,
+		"Accept":           "application/json, text/plain, */*",
+		"Referer":          d.base_url,
+		"User-Agent":       "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox",
+		"X-Requested-With": "XMLHttpRequest",
+	}).SetQueryParams(map[string]string{
+		"app_id": "250528", "web": "1", "channel": "dubox", "clienttype": "0", "jsToken": d.JsToken,
+	})
+	if params != nil {
+		req.SetQueryParams(params)
+	}
+	req.SetFileReader(fileFieldName, fileName, fileReader)
+	if resp != nil {
+		req.SetResult(resp)
+	}
+	fullURL := d.base_url + pathname
+	if strings.HasPrefix(pathname, "http://") || strings.HasPrefix(pathname, "https://") {
+		fullURL = pathname
+	}
+	res, err := req.Execute(http.MethodPost, fullURL)
+	if err != nil {
+		return nil, err
+	}
+	return res.Body(), nil
 }
 
 func (d *Terabox) getFiles(dir string) ([]File, error) {
@@ -240,7 +260,7 @@ func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link
 		return nil, fmt.Errorf("fid %s no dlink found, errno: %d", file.GetID(), resp.Errno)
 	}
 
-	res, err := base.NoRedirectClient.R().SetHeader("Cookie", d.Cookie).SetHeader("User-Agent", "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox").Get(resp.Dlink[0].Dlink)
+	res, err := base.NoRedirectFor(d).R().SetHeader("Cookie", d.Cookie).SetHeader("User-Agent", "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox").Get(resp.Dlink[0].Dlink)
 	if err != nil {
 		return nil, err
 	}

@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -19,9 +18,6 @@ import (
 	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
-
-var upClient *resty.Client
-var once sync.Once
 
 func (d *LanZou) doupload(callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	return d.post(d.BaseUrl+"/doupload.php", func(req *resty.Request) {
@@ -100,12 +96,9 @@ func (d *LanZou) request(url string, method string, callback base.ReqCallback, u
 	var vs string
 	for retry := 0; retry < 3; retry++ {
 		if up {
-			once.Do(func() {
-				upClient = base.NewRestyClient().SetTimeout(120 * time.Second)
-			})
-			req = upClient.R()
+			req = base.NewTransferRestyFor(d).SetTimeout(120 * time.Second).R()
 		} else {
-			req = base.RestyClient.R()
+			req = base.RestyFor(d).R()
 		}
 
 		req.SetHeaders(map[string]string{
@@ -157,7 +150,7 @@ func (d *LanZou) request(url string, method string, callback base.ReqCallback, u
 }
 
 func (d *LanZou) Login() ([]*http.Cookie, error) {
-	resp, err := base.NewRestyClient().SetRedirectPolicy(resty.NoRedirectPolicy()).
+	resp, err := base.NewRestyFor(d).SetRedirectPolicy(resty.NoRedirectPolicy()).
 		R().SetFormData(map[string]string{
 		"task":         "3",
 		"uid":          d.Account,
@@ -467,7 +460,7 @@ func (d *LanZou) getFilesByShareUrl(shareID, pwd string, sharePageData string) (
 	var vs string
 	var bodyStr string
 	for i := 0; i < 3; i++ {
-		res, err = base.NoRedirectClient.R().SetHeaders(map[string]string{
+		res, err = base.NoRedirectFor(d).R().SetHeaders(map[string]string{
 			"accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
 			"Referer":         baseUrl,
 		}).SetDoNotParseResponse(true).
@@ -608,7 +601,7 @@ func (d *LanZou) getFolderByShareUrl(pwd string, sharePageData string) ([]FileOr
 
 // 通过下载头获取真实文件信息
 func (d *LanZou) getFileRealInfo(downURL string) (*int64, *time.Time) {
-	res, _ := base.RestyClient.R().Head(downURL)
+	res, _ := base.RestyFor(d).R().Head(downURL)
 	if res == nil {
 		return nil, nil
 	}

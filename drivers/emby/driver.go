@@ -44,7 +44,7 @@ func (d *Emby) Init(ctx context.Context) error {
 		d.RootFolderID = "1"
 	}
 
-	d.client = base.HttpClient
+	d.client = base.APIClientFor(d)
 	d.token = strings.TrimSpace(d.ApiKey)
 	d.userID = strings.TrimSpace(d.UserID)
 
@@ -200,7 +200,7 @@ func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 
 			req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, detailURL.String(), nil)
 			if reqErr == nil {
-				resp, doErr := d.client.Do(req)
+				resp, doErr := base.TransferClientFor(d).Do(req)
 				if doErr == nil {
 					func() {
 						defer resp.Body.Close()

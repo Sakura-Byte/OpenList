@@ -61,7 +61,7 @@ func (d *AliDrive) refreshToken() error {
 	url := "https://auth.alipan.com/v2/account/token"
 	var resp base.TokenResp
 	var e RespErr
-	_, err := base.RestyClient.R().
+	_, err := base.RestyFor(d).R().
 		//ForceContentType("application/json").
 		SetBody(base.Json{"refresh_token": d.RefreshToken, "grant_type": "refresh_token"}).
 		SetResult(&resp).
@@ -82,7 +82,7 @@ func (d *AliDrive) refreshToken() error {
 }
 
 func (d *AliDrive) request(url, method string, callback base.ReqCallback, resp interface{}) ([]byte, error, RespErr) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	state, ok := global.Load(d.UserID)
 	if !ok {
 		if url == "https://api.alipan.com/v2/user/get" {

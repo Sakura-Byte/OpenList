@@ -22,7 +22,7 @@ func (d *CnbReleases) Request(method string, path string, callback base.ReqCallb
 	} else {
 		url = "https://api.cnb.cool" + path
 	}
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Accept", "application/json")
 	req.SetAuthScheme("Bearer")
 	req.SetAuthToken(d.Token)

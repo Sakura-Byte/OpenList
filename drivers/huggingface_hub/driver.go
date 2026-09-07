@@ -74,7 +74,7 @@ func (d *HuggingFaceHub) Init(ctx context.Context) error {
 
 	d.token = strings.TrimSpace(d.Token)
 
-	d.client = base.NewRestyClient().
+	d.client = base.NewRestyFor(d).
 		SetHeader("Accept", "application/json")
 	if d.token != "" {
 		d.client.SetHeader("Authorization", "Bearer "+d.token)

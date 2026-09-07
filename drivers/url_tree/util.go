@@ -10,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -33,7 +34,11 @@ import (
  * url8
  */
 // if there are no name, use the last segment of url as name
-func BuildTree(text string, headSize bool) (*Node, error) {
+func BuildTree(text string, headSize bool, clients ...*resty.Client) (*Node, error) {
+	var client *resty.Client
+	if len(clients) > 0 {
+		client = clients[0]
+	}
 	var root = &Node{Level: -1, Name: "root"}
 	stack := []*Node{root}
 	for line := range strings.SplitSeq(text, "\n") {
@@ -76,7 +81,7 @@ func BuildTree(text string, headSize bool) (*Node, error) {
 		} else {
 			// if the line is a file
 			// create a new node
-			node, err := parseFileLine(line, headSize)
+			node, err := parseFileLine(line, headSize, client)
 			if err != nil {
 				return nil, err
 			}
@@ -94,7 +99,7 @@ func isFolder(line string) bool {
 
 // line definition:
 // [FileName:][FileSize:][Modified:]Url
-func parseFileLine(line string, headSize bool) (*Node, error) {
+func parseFileLine(line string, headSize bool, clients ...*resty.Client) (*Node, error) {
 	// if there is no url, it is an error
 	if !strings.Contains(line, "http://") && !strings.Contains(line, "https://") {
 		return nil, fmt.Errorf("invalid line: %s, because url is required for file", line)
@@ -138,7 +143,7 @@ func parseFileLine(line string, headSize bool) (*Node, error) {
 		node.Name = stdpath.Base(url)
 	}
 	if !haveSize && headSize {
-		size, err := getSizeFromUrl(url)
+		size, err := getSizeFromUrl(url, clients...)
 		if err != nil {
 			log.Errorf("get size from url error: %s", err)
 		} else {
@@ -175,8 +180,15 @@ func nodeToObj(node *Node, path string) (model.Obj, error) {
 	}, nil
 }
 
-func getSizeFromUrl(url string) (int64, error) {
-	res, err := base.RestyClient.R().SetDoNotParseResponse(true).Head(url)
+func getSizeFromUrl(url string, clients ...*resty.Client) (int64, error) {
+	var client *resty.Client
+	if len(clients) > 0 {
+		client = clients[0]
+	}
+	if client == nil {
+		client = base.RestyClient
+	}
+	res, err := client.R().SetDoNotParseResponse(true).Head(url)
 	if err != nil {
 		return 0, err
 	}

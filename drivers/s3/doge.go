@@ -25,7 +25,7 @@ type Credentials struct {
 	SessionToken    string `json:"sessionToken,omitempty"`
 }
 
-func getCredentials(AccessKey, SecretKey string) (rst Credentials, err error) {
+func getCredentials(client *http.Client, AccessKey, SecretKey string) (rst Credentials, err error) {
 	apiPath := "/auth/tmp_token.json"
 	reqBody, err := json.Marshal(map[string]interface{}{"channel": "OSS_FULL", "scopes": []string{"*"}})
 	if err != nil {
@@ -44,7 +44,6 @@ func getCredentials(AccessKey, SecretKey string) (rst Credentials, err error) {
 	}
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Authorization", Authorization)
-	client := http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return rst, err

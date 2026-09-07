@@ -34,7 +34,7 @@ func (d *CFImgBed) Init(ctx context.Context) error {
 	}
 	d.Address = strings.TrimRight(d.Address, "/")
 
-	d.client = base.NewRestyClient().
+	d.client = base.NewRestyFor(d).
 		SetBaseURL(d.Address).
 		SetHeader("Authorization", "Bearer "+d.Token).
 		SetDebug(false)

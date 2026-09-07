@@ -92,11 +92,11 @@ func (d *BaiduPhoto) Request(client *resty.Client, furl string, method string, c
 // }
 
 func (d *BaiduPhoto) Get(furl string, callback base.ReqCallback, resp interface{}) (*resty.Response, error) {
-	return d.Request(base.RestyClient, furl, http.MethodGet, callback, resp)
+	return d.Request(base.RestyFor(d), furl, http.MethodGet, callback, resp)
 }
 
 func (d *BaiduPhoto) Post(furl string, callback base.ReqCallback, resp interface{}) (*resty.Response, error) {
-	return d.Request(base.RestyClient, furl, http.MethodPost, callback, resp)
+	return d.Request(base.RestyFor(d), furl, http.MethodPost, callback, resp)
 }
 
 // 获取所有文件
@@ -342,7 +342,7 @@ func (d *BaiduPhoto) linkAlbum(ctx context.Context, file *AlbumFile, args model.
 		headers["X-Forwarded-For"] = args.IP
 	}
 
-	resp, err := d.Request(base.NoRedirectClient, ALBUM_API_URL+"/download", http.MethodHead, func(r *resty.Request) {
+	resp, err := d.Request(base.NoRedirectFor(d), ALBUM_API_URL+"/download", http.MethodHead, func(r *resty.Request) {
 		r.SetContext(ctx)
 		r.SetHeaders(headers)
 		r.SetQueryParams(map[string]string{

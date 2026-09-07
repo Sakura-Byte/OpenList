@@ -58,7 +58,7 @@ func (x *ThunderBrowser) Init(ctx context.Context) (err error) {
 	if x.XunLeiBrowserCommon == nil {
 		x.XunLeiBrowserCommon = &XunLeiBrowserCommon{
 			Common: &Common{
-				client:            base.NewRestyClient(),
+				client:            base.NewRestyFor(x),
 				Algorithms:        Algorithms,
 				DeviceID:          utils.GetMD5EncodeStr(x.Username + x.Password),
 				ClientID:          ClientID,
@@ -179,7 +179,7 @@ func (x *ThunderBrowserExpert) Init(ctx context.Context) (err error) {
 		x.identity = identity
 		x.XunLeiBrowserCommon = &XunLeiBrowserCommon{
 			Common: &Common{
-				client: base.NewRestyClient(),
+				client: base.NewRestyFor(x),
 				DeviceID: func() string {
 					if len(x.DeviceID) != 32 {
 						if x.LoginType == "user" {

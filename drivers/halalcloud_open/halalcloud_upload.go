@@ -12,14 +12,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	openlistnet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	sdkUserFile "github.com/halalcloud/golang-sdk-lite/halalcloud/services/userfile"
 	"github.com/ipfs/go-cid"
 	log "github.com/sirupsen/logrus"
 )
 
 func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream model.FileStreamer, up driver.UpdateProgress) (model.Obj, error) {
+	ctx = openlistnet.WithHTTPClient(ctx, base.TransferClientFor(d))
 
 	newPath := path.Join(dstDir.GetPath(), fileStream.GetName())
 
@@ -99,7 +102,7 @@ func (d *HalalCloudOpen) put(ctx context.Context, dstDir model.Obj, fileStream m
 func makeFile(ctx context.Context, fileSlice []string, taskID string, uploadAddress string, retry int) (*sdkUserFile.File, error) {
 	var lastError error = nil
 	for range retry {
-		newFile, err := doMakeFile(fileSlice, taskID, uploadAddress)
+		newFile, err := doMakeFile(ctx, fileSlice, taskID, uploadAddress)
 		if err == nil {
 			return newFile, nil
 		}
@@ -116,7 +119,7 @@ func makeFile(ctx context.Context, fileSlice []string, taskID string, uploadAddr
 	return nil, fmt.Errorf("mk file slice failed after %d times, error: %s", retry, lastError.Error())
 }
 
-func doMakeFile(fileSlice []string, taskID string, uploadAddress string) (*sdkUserFile.File, error) {
+func doMakeFile(ctx context.Context, fileSlice []string, taskID string, uploadAddress string) (*sdkUserFile.File, error) {
 	accessUrl := uploadAddress + "/" + taskID
 	getTimeOut := time.Minute * 2
 	u, err := url.Parse(accessUrl)
@@ -134,8 +137,9 @@ func doMakeFile(fileSlice []string, taskID string, uploadAddress string) (*sdkUs
 		},
 		Body: io.NopCloser(bytes.NewReader(n)),
 	}
-	httpClient := http.Client{
-		Timeout: getTimeOut,
+	httpClient := openlistnet.HTTPClientFromContext(ctx)
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: getTimeOut}
 	}
 	httpResponse, err := httpClient.Do(&httpRequest)
 	if err != nil {
@@ -166,7 +170,7 @@ func doMakeFile(fileSlice []string, taskID string, uploadAddress string) (*sdkUs
 func postFileSlice(ctx context.Context, fileSlice []byte, taskID string, uploadAddress string, preix cid.Prefix, retry int) (cid.Cid, error) {
 	var lastError error = nil
 	for range retry {
-		newCid, err := doPostFileSlice(fileSlice, taskID, uploadAddress, preix)
+		newCid, err := doPostFileSlice(ctx, fileSlice, taskID, uploadAddress, preix)
 		if err == nil {
 			return newCid, nil
 		}
@@ -178,7 +182,7 @@ func postFileSlice(ctx context.Context, fileSlice []byte, taskID string, uploadA
 	}
 	return cid.Undef, fmt.Errorf("upload file slice failed after %d times, error: %s", retry, lastError.Error())
 }
-func doPostFileSlice(fileSlice []byte, taskID string, uploadAddress string, preix cid.Prefix) (cid.Cid, error) {
+func doPostFileSlice(ctx context.Context, fileSlice []byte, taskID string, uploadAddress string, preix cid.Prefix) (cid.Cid, error) {
 	// 1. sum file slice
 	newCid, err := preix.Sum(fileSlice)
 	if err != nil {
@@ -206,8 +210,9 @@ func doPostFileSlice(fileSlice []byte, taskID string, uploadAddress string, prei
 			"Accept": {"application/json"},
 		},
 	}
-	httpClient := http.Client{
-		Timeout: getTimeOut,
+	httpClient := openlistnet.HTTPClientFromContext(ctx)
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: getTimeOut}
 	}
 	httpResponse, err := httpClient.Do(&httpRequest)
 	if err != nil {

@@ -42,7 +42,7 @@ func (d *Cloudreve) request(method string, path string, callback base.ReqCallbac
 		return d.ref.request(method, path, callback, out)
 	}
 	u := d.Address + "/api/v3" + path
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"Cookie":     "cloudreve-session=" + d.Cookie,
 		"Accept":     "application/json, text/plain, */*",
@@ -130,7 +130,7 @@ func (d *Cloudreve) doLogin(needCaptcha bool) error {
 		}
 		i := strings.Index(captcha, ",")
 		dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(captcha[i+1:]))
-		vRes, err := base.RestyClient.R().SetMultipartField(
+		vRes, err := base.RestyFor(d).R().SetMultipartField(
 			"image", "validateCode.png", "image/png", dec).
 			Post(setting.GetStr(conf.OcrApi))
 		if err != nil {
@@ -170,7 +170,7 @@ func (d *Cloudreve) GetThumb(file Object) (model.Thumbnail, error) {
 	if !d.Addition.EnableThumbAndFolderSize {
 		return model.Thumbnail{}, nil
 	}
-	req := base.NoRedirectClient.R()
+	req := base.NoRedirectFor(d).R()
 	req.SetHeaders(map[string]string{
 		"Cookie":     "cloudreve-session=" + d.Cookie,
 		"Accept":     "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
@@ -216,7 +216,7 @@ func (d *Cloudreve) upLocal(ctx context.Context, stream model.FileStreamer, u Up
 					return true
 				}
 				var retryResp Resp
-				jErr := base.RestyClient.JSONUnmarshal(r.Body(), &retryResp)
+				jErr := base.RestyFor(d).JSONUnmarshal(r.Body(), &retryResp)
 				if jErr != nil {
 					return true
 				}
@@ -269,7 +269,7 @@ func (d *Cloudreve) upRemote(ctx context.Context, stream model.FileStreamer, u U
 				req.ContentLength = byteSize
 				req.Header.Set("Authorization", fmt.Sprint(credential))
 				req.Header.Set("User-Agent", d.getUA())
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}
@@ -337,7 +337,7 @@ func (d *Cloudreve) upOneDrive(ctx context.Context, stream model.FileStreamer, u
 				req.ContentLength = byteSize
 				req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, stream.GetSize()))
 				req.Header.Set("User-Agent", d.getUA())
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}
@@ -402,7 +402,7 @@ func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u Uploa
 				}
 				req.ContentLength = byteSize
 				req.Header.Set("User-Agent", d.getUA())
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}
@@ -453,7 +453,7 @@ func (d *Cloudreve) upS3(ctx context.Context, stream model.FileStreamer, u Uploa
 	}
 	req.Header.Set("Content-Type", "application/xml")
 	req.Header.Set("User-Agent", d.getUA())
-	res, err := base.HttpClient.Do(req)
+	res, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}

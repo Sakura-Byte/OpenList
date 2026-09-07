@@ -38,7 +38,7 @@ func (d *PikPak) GetAddition() driver.Additional {
 func (d *PikPak) Init(ctx context.Context) (err error) {
 	if d.Common == nil {
 		d.Common = &Common{
-			client:       base.NewRestyClient(),
+			client:       base.NewRestyFor(d),
 			CaptchaToken: "",
 			UserID:       "",
 			DeviceID:     utils.GetMD5EncodeStr(d.Username + d.Password),

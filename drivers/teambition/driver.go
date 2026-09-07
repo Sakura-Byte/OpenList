@@ -42,7 +42,7 @@ func (d *Teambition) List(ctx context.Context, dir model.Obj, args model.ListArg
 func (d *Teambition) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	if u, ok := file.(model.URL); ok {
 		url := u.URL()
-		res, _ := base.NoRedirectClient.R().Get(url)
+		res, _ := base.NoRedirectFor(d).R().Get(url)
 		if res.StatusCode() == 302 {
 			url = res.Header().Get("location")
 		}

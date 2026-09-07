@@ -42,7 +42,7 @@ func (d *OnedriveVercel) List(ctx context.Context, dir model.Obj, args model.Lis
 	var resp FolderResp
 	for next != "" {
 		resp.Next = ""
-		req := base.RestyClient.R().
+		req := base.RestyFor(d).R().
 			SetResult(&resp)
 		if d.Host != "" {
 			req.SetHeader("Host", d.Host)
@@ -76,7 +76,7 @@ func (d *OnedriveVercel) List(ctx context.Context, dir model.Obj, args model.Lis
 
 func (d *OnedriveVercel) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	url := d.Address + "/api/raw/?path=" + url.QueryEscape(file.GetPath())
-	req := base.NoRedirectClient.R()
+	req := base.NoRedirectFor(d).R()
 	if d.Host != "" {
 		req.SetHeader("Host", d.Host)
 	}

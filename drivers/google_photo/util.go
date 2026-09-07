@@ -21,7 +21,7 @@ func (d *GooglePhoto) refreshToken() error {
 	url := "https://www.googleapis.com/oauth2/v4/token"
 	var resp base.TokenResp
 	var e TokenError
-	_, err := base.RestyClient.R().SetResult(&resp).SetError(&e).
+	_, err := base.RestyFor(d).R().SetResult(&resp).SetError(&e).
 		SetFormData(map[string]string{
 			"client_id":     d.ClientID,
 			"client_secret": d.ClientSecret,
@@ -39,7 +39,7 @@ func (d *GooglePhoto) refreshToken() error {
 }
 
 func (d *GooglePhoto) request(url string, method string, callback base.ReqCallback, resp interface{}, headers map[string]string) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	req.SetHeader("Accept-Encoding", "gzip")
 	if headers != nil {

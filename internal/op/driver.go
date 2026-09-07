@@ -72,6 +72,16 @@ func getMainItems(config driver.Config) []driver.Item {
 		Name: "remark",
 		Type: conf.TypeText,
 	}}
+	for _, prefix := range []string{"api", "transfer"} {
+		items = append(items, driver.Item{
+			Name: prefix + "_proxy_mode", Type: conf.TypeSelect,
+			Options: "disabled,system,manual", Default: "system", Required: true,
+			Help: "Outbound HTTP proxy for this storage; system uses proxy_address then proxy environment variables",
+		}, driver.Item{
+			Name: prefix + "_proxy_url", Type: conf.TypeString,
+			Help: "Manual proxy URL: http, https, socks5 or socks5h; optional username and password",
+		})
+	}
 	if !config.NoCache {
 		items = append(items, driver.Item{
 			Name:     "cache_expiration",

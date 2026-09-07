@@ -27,7 +27,7 @@ const (
 var defaultObjTypes = []string{"124", "0", "12", "30", "123", "22"}
 
 func (d *DoubaoNew) request(ctx context.Context, path string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetContext(ctx)
 	req.SetHeader("accept", "*/*")
 	req.SetHeader("origin", DoubaoURL)
@@ -269,7 +269,7 @@ func (d *DoubaoNew) previewLink(ctx context.Context, obj *Object, args model.Lin
 
 func (d *DoubaoNew) createShare(ctx context.Context, obj *Object) error {
 	doRequest := func(csrfToken string) (*resty.Response, []byte, error) {
-		req := base.RestyClient.R()
+		req := base.RestyFor(d).R()
 		req.SetContext(ctx)
 		req.SetHeader("accept", "application/json, text/plain, */*")
 		req.SetHeader("origin", DoubaoURL)
@@ -313,7 +313,7 @@ func (d *DoubaoNew) createFolder(ctx context.Context, parentToken, name string) 
 	}
 
 	doRequest := func(csrfToken string) (*resty.Response, []byte, error) {
-		req := base.RestyClient.R()
+		req := base.RestyFor(d).R()
 		req.SetContext(ctx)
 		req.SetHeader("accept", "*/*")
 		req.SetHeader("origin", DoubaoURL)
@@ -389,7 +389,7 @@ func (d *DoubaoNew) renameFolder(ctx context.Context, token, name string) error 
 	data.Set("name", name)
 
 	doRequest := func(csrfToken string) (*resty.Response, []byte, error) {
-		req := base.RestyClient.R()
+		req := base.RestyFor(d).R()
 		req.SetContext(ctx)
 		req.SetHeader("accept", "*/*")
 		req.SetHeader("origin", DoubaoURL)
@@ -508,7 +508,7 @@ func (d *DoubaoNew) moveObj(ctx context.Context, srcToken, destToken string) err
 		data.Set("dest_token", destToken)
 	}
 	doRequest := func(csrfToken string) (*resty.Response, []byte, error) {
-		req := base.RestyClient.R()
+		req := base.RestyFor(d).R()
 		req.SetContext(ctx)
 		req.SetHeader("accept", "*/*")
 		req.SetHeader("origin", DoubaoURL)
@@ -540,7 +540,7 @@ func (d *DoubaoNew) removeObj(ctx context.Context, tokens []string) error {
 		return fmt.Errorf("[doubao_new] remove missing tokens")
 	}
 	doRequest := func(csrfToken string) (*resty.Response, []byte, error) {
-		req := base.RestyClient.R()
+		req := base.RestyFor(d).R()
 		req.SetContext(ctx)
 		req.SetHeader("accept", "application/json, text/plain, */*")
 		req.SetHeader("origin", DoubaoURL)
@@ -591,7 +591,7 @@ func (d *DoubaoNew) removeObj(ctx context.Context, tokens []string) error {
 }
 
 func (d *DoubaoNew) getUserStorage(ctx context.Context) (UserStorageData, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetContext(ctx)
 	req.SetHeader("accept", "*/*")
 	req.SetHeader("origin", DoubaoURL)
@@ -667,7 +667,7 @@ func (d *DoubaoNew) getTaskStatus(ctx context.Context, taskID string) (TaskStatu
 	if taskID == "" {
 		return TaskStatusData{}, fmt.Errorf("[doubao_new] task status missing task_id")
 	}
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetContext(ctx)
 	req.SetHeader("accept", "application/json, text/plain, */*")
 	req.SetHeader("origin", DoubaoURL)

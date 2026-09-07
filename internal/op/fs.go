@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -235,6 +236,9 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 	}
 	key := Key(storage, path)
 	if ol, exists := Cache.linkCache.GetType(key, typeKey); exists {
+		if ol.link.HTTPClient == nil {
+			ol.link.HTTPClient = base.TransferClientFor(storage)
+		}
 		if ol.link.Expiration != nil ||
 			ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
 			return ol.link, ol.obj, nil
@@ -254,6 +258,9 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed get link")
 		}
+		if link.HTTPClient == nil {
+			link.HTTPClient = base.TransferClientFor(storage)
+		}
 		ol := &objWithLink{link: link, obj: file}
 		if link.Expiration != nil {
 			Cache.linkCache.SetTypeWithTTL(key, typeKey, ol, *link.Expiration)
@@ -268,6 +275,9 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 			return nil, nil, err
 		}
 		if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+			if ol.link.HTTPClient == nil {
+				ol.link.HTTPClient = base.TransferClientFor(storage)
+			}
 			return ol.link, ol.obj, nil
 		}
 	}

@@ -20,7 +20,7 @@ import (
 
 func (d *Misskey) request(path, method string, callback base.ReqCallback, resp interface{}) error {
 	url := d.Endpoint + "/api/drive" + path
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 
 	req.SetAuthToken(d.AccessToken).SetHeader("Content-Type", "application/json")
 
@@ -215,7 +215,7 @@ func (d *Misskey) put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 		formData["folderId"] = folderId.(string)
 	}
 
-	req := base.RestyClient.R().
+	req := base.RestyFor(d).R().
 		SetContext(ctx).
 		SetFileReader("file", stream.GetName(), reader).
 		SetFormData(formData).

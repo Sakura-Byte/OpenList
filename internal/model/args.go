@@ -31,6 +31,7 @@ type Link struct {
 	URL         string        `json:"url"`    // most common way
 	Header      http.Header   `json:"header"` // needed header (for url)
 	RangeReader RangeReaderIF `json:"-"`      // recommended way if can't use URL
+	HTTPClient  *http.Client  `json:"-"`      // storage-bound file transport, including cached links
 
 	Expiration *time.Duration // local cache expire Duration
 
@@ -49,6 +50,7 @@ func (l *Link) Clone() *Link {
 		URL:              l.URL,
 		Header:           l.Header,
 		RangeReader:      l.RangeReader,
+		HTTPClient:       l.HTTPClient,
 		Expiration:       l.Expiration,
 		Concurrency:      l.Concurrency,
 		PartSize:         l.PartSize,

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"golang.org/x/net/publicsuffix"
 )
 
@@ -22,6 +21,7 @@ type CookieAuth struct {
 	user     string
 	pass     string
 	endpoint string
+	client   *http.Client
 }
 
 // CookieResponse contains the requested cookies
@@ -79,10 +79,15 @@ xmlns:u="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-util
 
 // New creates a new CookieAuth struct
 func New(pUser, pPass, pEndpoint string) CookieAuth {
+	return NewWithHTTPClient(pUser, pPass, pEndpoint, nil)
+}
+
+func NewWithHTTPClient(pUser, pPass, pEndpoint string, client *http.Client) CookieAuth {
 	retStruct := CookieAuth{
 		user:     pUser,
 		pass:     pPass,
 		endpoint: pEndpoint,
+		client:   client,
 	}
 
 	return retStruct
@@ -116,9 +121,13 @@ func (ca *CookieAuth) getSPCookie(conf *SuccessResponse) (CookieResponse, error)
 		return CookieResponse{}, err
 	}
 
-	client := &http.Client{
-		Jar: jar,
+	client := ca.client
+	if client == nil {
+		client = http.DefaultClient
 	}
+	clientCopy := *client
+	clientCopy.Jar = jar
+	client = &clientCopy
 
 	// Send the previously acquired Token as a Post parameter
 	if _, err = client.Post(u.String(), "text/xml", strings.NewReader(conf.Succ.Token)); err != nil {
@@ -185,7 +194,10 @@ func (ca *CookieAuth) getSPToken() (*SuccessResponse, error) {
 		return nil, err
 	}
 
-	client := base.HttpClient
+	client := ca.client
+	if client == nil {
+		client = http.DefaultClient
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

@@ -30,7 +30,7 @@ func (d *Degoo) GetAddition() driver.Additional {
 
 func (d *Degoo) Init(ctx context.Context) error {
 
-	d.client = base.HttpClient
+	d.client = base.APIClientFor(d)
 
 	// Ensure we have a valid token (will login if needed or refresh if expired)
 	if err := d.ensureValidToken(ctx); err != nil {

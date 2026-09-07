@@ -73,7 +73,7 @@ func (d *WebDav) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 	}
 	if args.Redirect {
 		// get the url after redirect
-		req := base.NoRedirectClient.R()
+		req := base.NoRedirectFor(d).R()
 		req.Header = header
 		req.SetDoNotParseResponse(true)
 		res, err := req.Get(url)

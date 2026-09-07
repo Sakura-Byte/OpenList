@@ -100,7 +100,7 @@ func (d *DoubaoNew) mergeUploadBlocks(ctx context.Context, uploadID string, seqL
 	seqHeader := joinIntComma(seqList)
 	checksumHeader := buildCommaHeader(checksumList)
 
-	client := base.NewRestyClient()
+	client := base.NewTransferRestyFor(d)
 	client.SetCookieJar(nil)
 	req := client.R()
 	req.SetContext(ctx)
@@ -206,7 +206,7 @@ func (d *DoubaoNew) uploadBlockV3(ctx context.Context, uploadID string, block Up
 		return fmt.Errorf("[doubao_new] upload v3 block empty data")
 	}
 
-	req := base.RestyClient.R()
+	req := base.TransferRestyFor(d).R()
 	req.SetContext(ctx)
 	req.SetHeader("accept", "*/*")
 	req.SetHeader("origin", DoubaoURL)

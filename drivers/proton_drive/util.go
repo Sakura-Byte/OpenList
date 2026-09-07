@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -370,7 +371,7 @@ func (d *ProtonDrive) executeRenameAPI(ctx context.Context, linkID string, req R
 	httpReq.Header.Set("X-Pm-Uid", d.ReusableCredential.UID)
 	httpReq.Header.Set("Authorization", "Bearer "+d.ReusableCredential.AccessToken)
 
-	client := &http.Client{}
+	client := base.APIClientFor(d)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("failed to execute rename request: %w", err)
@@ -434,7 +435,7 @@ func (d *ProtonDrive) executeMoveAPI(ctx context.Context, linkID string, req Mov
 	httpReq.Header.Set("X-Pm-Uid", d.ReusableCredential.UID)
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
+	client := base.APIClientFor(d)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("failed to execute move request: %w", err)
@@ -649,6 +650,7 @@ func (d *ProtonDrive) initClient(ctx context.Context) error {
 	clientOptions := []proton.Option{
 		proton.WithAppVersion(d.appVersion),
 		proton.WithUserAgent(d.userAgent),
+		proton.WithTransport(base.APIClientFor(d).Transport),
 	}
 	manager := proton.New(clientOptions...)
 	d.c = manager.NewClient(d.ReusableCredential.UID, d.ReusableCredential.AccessToken, d.ReusableCredential.RefreshToken)

@@ -47,7 +47,7 @@ const (
 
 func (d *DoubaoShare) request(path string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	reqUrl := BaseURL + path
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 
 	req.SetHeaders(map[string]string{
 		"Cookie":     d.Cookie,

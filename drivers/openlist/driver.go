@@ -212,7 +212,7 @@ func (d *OpenList) Put(ctx context.Context, dstDir model.Obj, s model.FileStream
 	req.ContentLength = s.GetSize()
 	// client := base.NewHttpClient()
 	// client.Timeout = time.Hour * 6
-	res, err := base.HttpClient.Do(req)
+	res, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}

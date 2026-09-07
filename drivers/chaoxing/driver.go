@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -262,7 +263,7 @@ func (d *ChaoXing) Put(ctx context.Context, dstDir model.Obj, file model.FileStr
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.ContentLength = int64(body.Len()) + file.GetSize()
-	resps, err := http.DefaultClient.Do(req)
+	resps, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}

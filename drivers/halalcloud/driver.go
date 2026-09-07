@@ -13,6 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	openlistnet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
@@ -253,6 +254,7 @@ func (d *HalalCloud) getLink(ctx context.Context, file model.Obj, args model.Lin
 	size := result.FileSize
 	chunks := getChunkSizes(result.Sizes)
 	resultRangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
+		ctx = openlistnet.WithHTTPClient(ctx, base.TransferClientFor(d))
 		length := httpRange.Length
 		if httpRange.Length < 0 || httpRange.Start+httpRange.Length >= size {
 			length = size - httpRange.Start
@@ -374,7 +376,7 @@ func (d *HalalCloud) put(ctx context.Context, dstDir model.Obj, fileStream model
 	u.Host = "s3." + u.Host
 	result.Endpoint = u.String()
 	s, err := session.NewSession(&aws.Config{
-		HTTPClient:       base.HttpClient,
+		HTTPClient:       base.TransferClientFor(d),
 		Credentials:      credentials.NewStaticCredentials(result.AccessKey, result.SecretKey, result.Token),
 		Region:           aws.String(result.Region),
 		Endpoint:         aws.String(result.Endpoint),

@@ -17,7 +17,7 @@ func (d *Seafile) getToken() error {
 		return nil
 	}
 	var authResp AuthTokenResp
-	res, err := base.RestyClient.R().
+	res, err := base.RestyFor(d).R().
 		SetResult(&authResp).
 		SetFormData(map[string]string{
 			"username": d.UserName,
@@ -39,9 +39,9 @@ func (d *Seafile) request(method string, pathname string, callback base.ReqCallb
 	if !strings.HasPrefix(pathname, "http") {
 		full = d.Address + pathname
 	}
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	if len(noRedirect) > 0 && noRedirect[0] {
-		req = base.NoRedirectClient.R()
+		req = base.NoRedirectFor(d).R()
 	}
 	req.SetHeader("Authorization", d.authorization)
 	callback(req)

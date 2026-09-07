@@ -20,6 +20,12 @@ type Storage struct {
 	Disabled                    bool      `json:"disabled"` // if disabled
 	DisableIndex                bool      `json:"disable_index"`
 	EnableSign                  bool      `json:"enable_sign"`
+	APIProxyMode                ProxyMode `json:"api_proxy_mode" gorm:"default:system"`
+	APIProxyURL                 string    `json:"api_proxy_url" gorm:"type:text"`
+	TransferProxyMode           ProxyMode `json:"transfer_proxy_mode" gorm:"default:system"`
+	TransferProxyURL            string    `json:"transfer_proxy_url" gorm:"type:text"`
+	// NetworkClients is owned by the storage instance and never persisted or exposed.
+	NetworkClients any `json:"-" gorm:"-"`
 	Sort
 	Proxy
 }
@@ -44,6 +50,12 @@ func (s *Storage) GetStorage() *Storage {
 }
 
 func (s *Storage) SetStorage(storage Storage) {
+	if storage.APIProxyMode == "" {
+		storage.APIProxyMode = ProxySystem
+	}
+	if storage.TransferProxyMode == "" {
+		storage.TransferProxyMode = ProxySystem
+	}
 	*s = storage
 }
 

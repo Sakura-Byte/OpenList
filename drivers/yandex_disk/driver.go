@@ -129,7 +129,7 @@ func (d *YandexDisk) Put(ctx context.Context, dstDir model.Obj, s model.FileStre
 	}
 	req.Header.Set("Content-Length", strconv.FormatInt(s.GetSize(), 10))
 	req.Header.Set("Content-Type", "application/octet-stream")
-	res, err := base.HttpClient.Do(req)
+	res, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}

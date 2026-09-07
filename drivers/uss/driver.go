@@ -3,11 +3,13 @@ package uss
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -36,6 +38,9 @@ func (d *USS) Init(ctx context.Context) error {
 		Operator: d.OperatorName,
 		Password: d.OperatorPassword,
 	})
+	d.client.SetHTTPClient(base.RouteClient(d, base.APIClientFor(d), func(r *http.Request) bool {
+		return r.Method == http.MethodPut && r.Header.Get("Folder") == "" && r.Header.Get("X-Upyun-Multi-Stage") != "initiate" && r.Header.Get("X-Upyun-Multi-Stage") != "complete"
+	}))
 	return nil
 }
 

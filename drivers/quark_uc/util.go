@@ -26,7 +26,7 @@ import (
 
 func (d *QuarkOrUC) request(pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	u := d.conf.api + pathname
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"Cookie":  d.Cookie,
 		"Accept":  "application/json, text/plain, */*",
@@ -246,7 +246,7 @@ x-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit
 	q.Add("partNumber", strconv.Itoa(partNumber))
 	q.Add("uploadId", pre.Data.UploadId)
 	req.URL.RawQuery = q.Encode()
-	res, err := base.HttpClient.Do(req)
+	res, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -307,7 +307,7 @@ x-oss-user-agent:aliyun-sdk-js/6.6.1 Chrome 98.0.4758.80 on Windows 10 64-bit
 		return err
 	}
 	u := fmt.Sprintf("https://%s.%s/%s", pre.Data.Bucket, pre.Data.UploadUrl[7:], pre.Data.ObjKey)
-	res, err := base.RestyClient.R().
+	res, err := base.TransferRestyFor(d).R().
 		SetHeaders(map[string]string{
 			"Authorization":    resp.Data.AuthKey,
 			"Content-MD5":      contentMd5,

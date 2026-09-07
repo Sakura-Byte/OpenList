@@ -34,7 +34,7 @@ const (
 func (d *QuarkUCTV) request(ctx context.Context, pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	u := d.conf.api + pathname
 	tm, token, reqID := d.generateReqSign(method, pathname, d.conf.signKey)
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetContext(ctx)
 	req.SetHeaders(map[string]string{
 		"Accept":          "application/json, text/plain, */*",
@@ -170,7 +170,7 @@ func (d *QuarkUCTV) getRefreshTokenByTV(ctx context.Context, code string, isRefr
 		body["code"] = code
 	}
 
-	_, err := base.RestyClient.R().
+	_, err := base.RestyFor(d).R().
 		SetHeader("Content-Type", "application/json").
 		SetBody(body).
 		SetResult(&resp).

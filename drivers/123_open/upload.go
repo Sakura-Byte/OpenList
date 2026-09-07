@@ -131,7 +131,7 @@ func (d *Open123) Upload(ctx context.Context, file model.FileStreamer, createRes
 				req.Header.Add("Content-Type", w.FormDataContentType())
 				req.Header.Add("Platform", "open_platform")
 
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}

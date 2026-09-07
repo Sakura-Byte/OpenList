@@ -53,7 +53,7 @@ func (d *OpenList) request(ctx context.Context, api, method string, callback bas
 	if err := d.WaitLimit(ctx); err != nil {
 		return nil, 0, err
 	}
-	req := base.RestyClient.R().SetContext(ctx)
+	req := base.RestyFor(d).R().SetContext(ctx)
 	req.SetHeader("Authorization", d.Token)
 	if callback != nil {
 		callback(req)

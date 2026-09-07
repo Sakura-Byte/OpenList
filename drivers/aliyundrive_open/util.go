@@ -37,7 +37,7 @@ func (d *AliyundriveOpen) _refreshToken(ctx context.Context) (string, string, er
 		if err != nil {
 			return "", "", err
 		}
-		_, err = base.RestyClient.R().
+		_, err = base.RestyFor(d).R().
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
@@ -67,7 +67,7 @@ func (d *AliyundriveOpen) _refreshToken(ctx context.Context) (string, string, er
 	url := API_URL + "/oauth/access_token"
 	//var resp base.TokenResp
 	var e ErrResp
-	res, err := base.RestyClient.R().
+	res, err := base.RestyFor(d).R().
 		//ForceContentType("application/json").
 		SetBody(base.Json{
 			"client_id":     d.ClientID,
@@ -143,7 +143,7 @@ func (d *AliyundriveOpen) request(ctx context.Context, limitTy limiterType, uri,
 }
 
 func (d *AliyundriveOpen) requestReturnErrResp(ctx context.Context, limitTy limiterType, uri, method string, callback base.ReqCallback, retry ...bool) ([]byte, error, *ErrResp) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	// TODO check whether access_token is expired
 	req.SetHeader("Authorization", "Bearer "+d.getAccessToken())
 	if method == http.MethodPost {

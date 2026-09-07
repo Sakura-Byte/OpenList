@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/drivers/webdav/odrvcookie"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/gowebdav"
@@ -18,12 +19,12 @@ func (d *WebDav) isSharepoint() bool {
 
 func (d *WebDav) setClient() error {
 	c := gowebdav.NewClient(d.Address, d.Username, d.Password)
-	c.SetTransport(&http.Transport{
-		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: d.TlsInsecureSkipVerify},
-	})
+	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: d.TlsInsecureSkipVerify}}
+	c.SetTransport(base.RouteClient(d, &http.Client{Transport: transport}, func(r *http.Request) bool {
+		return r.Method == http.MethodGet || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodPost
+	}).Transport)
 	if d.isSharepoint() {
-		cookie, err := odrvcookie.GetCookie(d.Username, d.Password, d.Address)
+		cookie, err := odrvcookie.GetCookieWithHTTPClient(d.Username, d.Password, d.Address, base.APIClientFor(d))
 		if err == nil {
 			c.SetInterceptor(func(method string, rq *http.Request) {
 				rq.Header.Del("Authorization")

@@ -36,7 +36,7 @@ func (d *Wps) Init(ctx context.Context) error {
 		return fmt.Errorf("cookie is empty")
 	}
 
-	d.client = base.NewRestyClient()
+	d.client = base.NewRestyFor(d)
 
 	d.login = &loginState{}
 	resp, err := d.request(ctx).SetResult(d.login).Get("https://account.kdocs.cn/api/v3/islogin")

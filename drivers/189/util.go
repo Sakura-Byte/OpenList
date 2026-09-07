@@ -435,7 +435,7 @@ func (d *Cloud189) newUpload(ctx context.Context, dstDir model.Obj, file model.F
 			i := strings.Index(v, "=")
 			req.Header.Set(v[0:i], v[i+1:])
 		}
-		r, err := base.HttpClient.Do(req)
+		r, err := base.TransferClientFor(d).Do(req)
 		if err != nil {
 			return err
 		}

@@ -78,7 +78,7 @@ const (
 )
 
 func (d *PikPakShare) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"User-Agent":      d.GetUserAgent(),
 		"X-Client-ID":     d.GetClientID(),

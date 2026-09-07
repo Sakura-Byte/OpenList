@@ -403,7 +403,7 @@ func shouldRefreshJWT(token string) bool {
 
 func (d *DoubaoNew) fetchBizAuth(dpop string, public bool) (string, error) {
 	var reqUrl string
-	client := base.RestyClient.Clone()
+	client := base.RestyFor(d).Clone()
 	req := client.R()
 	req.SetHeader("accept", "application/json, text/javascript")
 	req.SetHeader("origin", DoubaoURL)

@@ -66,9 +66,9 @@ func (d *BunnyStorage) Init(ctx context.Context) error {
 		}
 		d.cdnBase = cdnBase
 	}
-	d.client = base.RestyClient
+	d.client = base.RestyFor(d)
 	if d.client == nil {
-		d.client = base.NewRestyClient()
+		d.client = base.NewRestyFor(d)
 	}
 	return nil
 }

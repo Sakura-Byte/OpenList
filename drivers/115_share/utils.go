@@ -88,6 +88,7 @@ func (d *Pan115Share) login() error {
 	var err error
 	opts := []driver115.Option{
 		driver115.UA(base.UserAgentNT),
+		driver115.WithRestyClient(base.RestyFor(d)),
 	}
 	d.client = driver115.New(opts...)
 	if _, err := d.client.GetShareSnap(d.ShareCode, d.ReceiveCode, ""); err != nil {

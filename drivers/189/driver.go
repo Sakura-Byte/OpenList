@@ -30,7 +30,7 @@ func (d *Cloud189) GetAddition() driver.Additional {
 }
 
 func (d *Cloud189) Init(ctx context.Context) error {
-	d.client = base.NewRestyClient().
+	d.client = base.NewRestyFor(d).
 		SetHeader("Referer", "https://cloud.189.cn/")
 	return d.newLogin()
 }

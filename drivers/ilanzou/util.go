@@ -67,7 +67,7 @@ func (d *ILanZou) request(pathname, method string, callback base.ReqCallback, pr
 
 	queryString := strings.Join(params, "&")
 
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"Origin":          d.conf.site,
 		"Referer":         d.conf.site + "/",

@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -79,6 +80,18 @@ func (c *TypedCache[T]) DeleteKey(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.entries, key)
+}
+
+// DeleteTree removes a path and descendants, including links with no cached directory.
+func (c *TypedCache[T]) DeleteTree(root string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	prefix := strings.TrimRight(root, "/") + "/"
+	for key := range c.entries {
+		if key == root || strings.HasPrefix(key, prefix) {
+			delete(c.entries, key)
+		}
+	}
 }
 
 func (c *TypedCache[T]) Clear() {

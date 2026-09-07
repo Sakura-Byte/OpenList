@@ -40,7 +40,7 @@ func (d *BaiduNetdisk) _refreshToken() error {
 			AccessToken  string `json:"access_token"`
 			ErrorMessage string `json:"text"`
 		}
-		_, err := base.RestyClient.R().
+		_, err := base.RestyFor(d).R().
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
@@ -70,7 +70,7 @@ func (d *BaiduNetdisk) _refreshToken() error {
 	u := "https://openapi.baidu.com/oauth/2.0/token"
 	var resp base.TokenResp
 	var e TokenErrResp
-	_, err := base.RestyClient.R().
+	_, err := base.RestyFor(d).R().
 		SetResult(&resp).
 		SetError(&e).
 		SetQueryParams(map[string]string{
@@ -97,7 +97,7 @@ func (d *BaiduNetdisk) _refreshToken() error {
 func (d *BaiduNetdisk) request(furl string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	var result []byte
 	err := retry.Do(func() error {
-		req := base.RestyClient.R()
+		req := base.RestyFor(d).R()
 		req.SetQueryParam("access_token", d.AccessToken)
 		if callback != nil {
 			callback(req)
@@ -207,7 +207,7 @@ func (d *BaiduNetdisk) linkOfficial(file model.Obj, _ model.LinkArgs) (*model.Li
 		return nil, err
 	}
 	u := fmt.Sprintf("%s&access_token=%s", resp.List[0].Dlink, d.AccessToken)
-	res, err := base.NoRedirectClient.R().SetHeader("User-Agent", "pan.baidu.com").Head(u)
+	res, err := base.NoRedirectFor(d).R().SetHeader("User-Agent", "pan.baidu.com").Head(u)
 	if err != nil {
 		return nil, err
 	}

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	netutil "github.com/OpenListTeam/OpenList/v4/internal/net"
 	streamPkg "github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	"github.com/avast/retry-go"
@@ -233,7 +233,7 @@ func (d *AliDoc) newOSSBucket(info uploadInfoResp) (*oss.Bucket, string, error) 
 	if useCname {
 		options = append(options, oss.UseCname(true))
 	}
-	client, err := netutil.NewOSSClient(
+	client, err := base.NewOSSClientFor(d,
 		endpoint,
 		sts.AccessKeyID,
 		sts.AccessKeySecret,

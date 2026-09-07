@@ -171,7 +171,7 @@ func (y *Cloud189PC) put(ctx context.Context, url string, headers map[string]str
 		}
 	}
 
-	resp, err := base.HttpClient.Do(req)
+	resp, err := base.TransferClientFor(y).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -537,7 +537,7 @@ func (y *Cloud189PC) initLoginParam() error {
 	}
 	if imgRes.Size() > 20 {
 		if setting.GetStr(conf.OcrApi) != "" && !y.NoUseOcr {
-			vRes, err := base.RestyClient.R().
+			vRes, err := base.RestyFor(y).R().
 				SetMultipartField("image", "validateCode.png", "image/png", bytes.NewReader(imgRes.Body())).
 				Post(setting.GetStr(conf.OcrApi))
 			if err != nil {

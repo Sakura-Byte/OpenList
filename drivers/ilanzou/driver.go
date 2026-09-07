@@ -43,7 +43,7 @@ func (d *ILanZou) GetAddition() driver.Additional {
 }
 
 func (d *ILanZou) Init(ctx context.Context) error {
-	d.upClient = base.NewRestyClient().SetTimeout(time.Minute * 10)
+	d.upClient = base.NewRestyFor(d).SetTimeout(time.Minute * 10)
 	if d.UUID == "" {
 		res, err := d.unproved("/getUuid", http.MethodGet, nil)
 		if err != nil {
@@ -152,7 +152,7 @@ func (d *ILanZou) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	u.RawQuery = strings.Join(params, "&")
 	realURL := u.String()
 	// get the url after redirect
-	req := base.NoRedirectClient.R().SetContext(ctx)
+	req := base.NoRedirectFor(d).R().SetContext(ctx)
 	req.SetHeaders(map[string]string{
 		"Origin":          d.conf.site,
 		"Referer":         d.conf.site + "/",

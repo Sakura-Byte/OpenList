@@ -142,7 +142,7 @@ func (d *Pan123) newUpload(ctx context.Context, upReq *UploadResp, file model.Fi
 					}
 					req.ContentLength = curSize
 					//req.Header.Set("Content-Length", strconv.FormatInt(curSize, 10))
-					res, err := base.HttpClient.Do(req)
+					res, err := base.TransferClientFor(d).Do(req)
 					if err != nil {
 						return err
 					}

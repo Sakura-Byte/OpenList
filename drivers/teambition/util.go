@@ -33,7 +33,7 @@ func (d *Teambition) request(pathname string, method string, callback base.ReqCa
 	if d.isInternational() {
 		url = "https://us.teambition.com" + pathname
 	}
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Cookie", d.Cookie)
 	if callback != nil {
 		callback(req)
@@ -131,7 +131,7 @@ func (d *Teambition) upload(ctx context.Context, file model.FileStreamer, token 
 		UpdateProgress: up,
 	})
 	var newFile FileUpload
-	res, err := base.RestyClient.R().
+	res, err := base.TransferRestyFor(d).R().
 		SetContext(ctx).
 		SetResult(&newFile).SetHeader("Authorization", token).
 		SetMultipartFormData(map[string]string{
@@ -157,7 +157,7 @@ func (d *Teambition) chunkUpload(ctx context.Context, file model.FileStreamer, t
 		referer = "https://us.teambition.com/"
 	}
 	var newChunk ChunkUpload
-	_, err := base.RestyClient.R().SetResult(&newChunk).SetHeader("Authorization", token).
+	_, err := base.RestyFor(d).R().SetResult(&newChunk).SetHeader("Authorization", token).
 		SetBody(base.Json{
 			"fileName":    file.GetName(),
 			"fileSize":    file.GetSize(),
@@ -183,7 +183,7 @@ func (d *Teambition) chunkUpload(ctx context.Context, file model.FileStreamer, t
 		u := fmt.Sprintf("https://%s.teambition.net/upload/chunk/%s?chunk=%d&chunks=%d",
 			prefix, newChunk.FileKey, i+1, newChunk.Chunks)
 		log.Debugf("url: %s", u)
-		_, err := base.RestyClient.R().
+		_, err := base.TransferRestyFor(d).R().
 			SetContext(ctx).
 			SetHeaders(map[string]string{
 				"Authorization": token,
@@ -197,7 +197,7 @@ func (d *Teambition) chunkUpload(ctx context.Context, file model.FileStreamer, t
 		}
 		up(float64(i) * 100 / float64(newChunk.Chunks))
 	}
-	_, err = base.RestyClient.R().SetHeader("Authorization", token).Post(
+	_, err = base.TransferRestyFor(d).R().SetHeader("Authorization", token).Post(
 		fmt.Sprintf("https://%s.teambition.net/upload/chunk/%s",
 			prefix, newChunk.FileKey))
 	if err != nil {

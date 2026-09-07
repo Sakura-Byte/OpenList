@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -46,6 +47,9 @@ func GetStorageByMountPath(mountPath string) (driver.Driver, error) {
 // CreateStorage Save the storage to database so storage can get an id
 // then instantiate corresponding driver and save it in memory
 func CreateStorage(ctx context.Context, storage model.Storage) (uint, error) {
+	if err := storage.NormalizeProxy(); err != nil {
+		return 0, err
+	}
 	storage.Modified = time.Now()
 	storage.MountPath = utils.FixAndCleanPath(storage.MountPath)
 	var err error
@@ -67,12 +71,15 @@ func CreateStorage(ctx context.Context, storage model.Storage) (uint, error) {
 	if err != nil {
 		return storage.ID, errors.Wrap(err, "failed init storage but storage is already created")
 	}
-	log.Debugf("storage %+v is created", storageDriver)
+	log.Debugf("storage %s is created", storage.MountPath)
 	return storage.ID, nil
 }
 
 // LoadStorage load exist storage in db to memory
 func LoadStorage(ctx context.Context, storage model.Storage) error {
+	if err := storage.NormalizeProxy(); err != nil {
+		return err
+	}
 	storage.MountPath = utils.FixAndCleanPath(storage.MountPath)
 	// check driver first
 	driverName := storage.Driver
@@ -84,7 +91,7 @@ func LoadStorage(ctx context.Context, storage model.Storage) error {
 
 	err = initStorage(ctx, storage, storageDriver)
 	go callStorageHooks("add", storageDriver)
-	log.Debugf("storage %+v is created", storageDriver)
+	log.Debugf("storage %s is created", storage.MountPath)
 	return err
 }
 
@@ -96,7 +103,14 @@ func getCurrentGoroutineStack() string {
 
 // initStorage initialize the driver and store to storagesMap
 func initStorage(ctx context.Context, storage model.Storage, storageDriver driver.Driver) (err error) {
+	if err := storage.NormalizeProxy(); err != nil {
+		return err
+	}
 	storageDriver.SetStorage(storage)
+	if err := base.ValidateStorageProxyPolicies(storageDriver); err != nil {
+		return err
+	}
+	base.ClientsFor(storageDriver)
 	driverStorage := storageDriver.GetStorage()
 	defer func() {
 		if err := recover(); err != nil {
@@ -204,6 +218,7 @@ func DisableStorage(ctx context.Context, id uint) error {
 	if err := storageDriver.Drop(ctx); err != nil {
 		return errors.Wrap(err, "failed drop storage")
 	}
+	base.CloseStorageClients(storageDriver)
 	// delete the storage in the memory
 	storage.Disabled = true
 	storage.SetStatus(DISABLED)
@@ -227,6 +242,9 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 	if oldStorage.Driver != storage.Driver {
 		return errors.Errorf("driver cannot be changed")
 	}
+	if err := storage.NormalizeProxy(); err != nil {
+		return err
+	}
 	storage.Modified = time.Now()
 	storage.MountPath = utils.FixAndCleanPath(storage.MountPath)
 	err = db.UpdateStorage(&storage)
@@ -237,7 +255,7 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 		return nil
 	}
 	storageDriver, err := GetStorageByMountPath(oldStorage.MountPath)
-	if oldStorage.MountPath != storage.MountPath {
+	if oldStorage.MountPath != storage.MountPath && storageDriver != nil {
 		// mount path renamed, need to drop the storage
 		storagesMap.Delete(oldStorage.MountPath)
 		Cache.DeleteDirectoryTree(storageDriver, "/")
@@ -250,10 +268,13 @@ func UpdateStorage(ctx context.Context, storage model.Storage) error {
 	if err != nil {
 		return errors.Wrapf(err, "failed drop storage")
 	}
+	base.CloseStorageClients(storageDriver)
+	Cache.linkCache.DeleteTree(oldStorage.MountPath)
+	extractCache.DeleteTree(oldStorage.MountPath)
 
 	err = initStorage(ctx, storage, storageDriver)
 	go callStorageHooks("update", storageDriver)
-	log.Debugf("storage %+v is update", storageDriver)
+	log.Debugf("storage %s is updated", storage.MountPath)
 	return err
 }
 
@@ -272,6 +293,7 @@ func DeleteStorageById(ctx context.Context, id uint) error {
 		if err := storageDriver.Drop(ctx); err != nil {
 			dropErr = errors.Wrapf(err, "failed drop storage")
 		}
+		base.CloseStorageClients(storageDriver)
 		// delete the storage in the memory
 		storagesMap.Delete(storage.MountPath)
 		Cache.DeleteDirectoryTree(storageDriver, "/")

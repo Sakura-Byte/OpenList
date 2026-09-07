@@ -3,8 +3,10 @@ package template
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -29,7 +31,9 @@ func (d *Wopan) GetAddition() driver.Additional {
 }
 
 func (d *Wopan) Init(ctx context.Context) error {
-	d.client = wopan.DefaultWithRefreshToken(d.RefreshToken)
+	d.client = wopan.DefaultWithRefreshToken(d.RefreshToken).SetHttpClient(base.RouteClient(d, base.APIClientFor(d), func(r *http.Request) bool {
+		return r.Method == http.MethodGet && (r.URL.Path == "/download" || r.URL.Query().Get("download") != "")
+	}))
 	d.client.SetAccessToken(d.AccessToken)
 	d.client.OnRefreshToken(func(accessToken, refreshToken string) {
 		d.AccessToken = accessToken

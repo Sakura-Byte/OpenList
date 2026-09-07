@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/halalcloud/golang-sdk-lite/halalcloud/apiclient"
 	sdkUser "github.com/halalcloud/golang-sdk-lite/halalcloud/services/user"
@@ -36,7 +37,7 @@ func (d *HalalCloudOpen) Init(ctx context.Context) error {
 		host = "openapi.2dland.cn"
 	}
 
-	client := apiclient.NewClient(nil, host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon, apiclient.WithTimeout(time.Second*time.Duration(timeout)))
+	client := apiclient.NewClient(base.APIClientFor(d), host, d.Addition.ClientID, d.Addition.ClientSecret, d.halalCommon, apiclient.WithTimeout(time.Second*time.Duration(timeout)))
 	d.sdkClient = client
 	d.sdkUserFileService = sdkUserFile.NewUserFileService(client)
 	d.sdkUserService = sdkUser.NewUserService(client)

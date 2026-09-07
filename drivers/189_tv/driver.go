@@ -58,7 +58,7 @@ func (y *Cloud189TV) Init(ctx context.Context) (err error) {
 
 	// 初始化请求客户端
 	if y.client == nil {
-		y.client = base.NewRestyClient().SetHeaders(
+		y.client = base.NewRestyFor(y).SetHeaders(
 			map[string]string{
 				"Accept":     "application/json;charset=UTF-8",
 				"User-Agent": "EcloudTV/6.5.5 (PJX110; unknown; home02) Android/35",
@@ -130,7 +130,7 @@ func (y *Cloud189TV) Link(ctx context.Context, file model.Obj, args model.LinkAr
 
 	// 重定向获取真实链接
 	downloadUrl.URL = strings.Replace(strings.ReplaceAll(downloadUrl.URL, "&amp;", "&"), "http://", "https://", 1)
-	res, err := base.NoRedirectClient.R().SetContext(ctx).SetDoNotParseResponse(true).Get(downloadUrl.URL)
+	res, err := base.NoRedirectFor(y).R().SetContext(ctx).SetDoNotParseResponse(true).Get(downloadUrl.URL)
 	if err != nil {
 		return nil, err
 	}

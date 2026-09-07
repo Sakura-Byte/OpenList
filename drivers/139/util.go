@@ -114,7 +114,7 @@ func (d *Yun139) refreshToken() error {
 	url := "https://aas.caiyun.feixin.10086.cn:443/tellin/authTokenRefresh.do"
 	var resp RefreshTokenResp
 	reqBody := "<root><token>" + splits[2] + "</token><account>" + splits[1] + "</account><clienttype>656</clienttype></root>"
-	_, err = base.RestyClient.R().
+	_, err = base.RestyFor(d).R().
 		ForceContentType("application/xml").
 		SetBody(reqBody).
 		SetResult(&resp).
@@ -135,7 +135,7 @@ func (d *Yun139) refreshToken() error {
 }
 
 func (d *Yun139) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	randStr := random.String(16)
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	if callback != nil {
@@ -209,7 +209,7 @@ SUCCESS_PROCESS:
 
 func (d *Yun139) requestRoute(data interface{}, resp interface{}) ([]byte, error) {
 	url := "https://user-njs.yun.139.com/user/route/qryRoutePolicy"
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	randStr := random.String(16)
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	callback := func(req *resty.Request) {
@@ -821,7 +821,7 @@ func unicode(str string) string {
 }
 
 func (d *Yun139) newRequest(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	randStr := random.String(16)
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	if callback != nil {
@@ -1076,7 +1076,7 @@ func (d *Yun139) uploadPersonalParts(ctx context.Context, partInfos []PartInfo, 
 				req.Header.Set("Referer", "https://yun.139.com/")
 				req.ContentLength = partSize
 
-				res, doErr := base.HttpClient.Do(req)
+				res, doErr := base.TransferClientFor(d).Do(req)
 				if doErr != nil {
 					return doErr
 				}
@@ -1164,7 +1164,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 	log.Debugf("DEBUG: 登录请求 Body: %s", loginData.Encode())
 
 	// 设置客户端不跟随重定向
-	client := base.RestyClient.SetRedirectPolicy(resty.NoRedirectPolicy())
+	client := base.RestyFor(d).SetRedirectPolicy(resty.NoRedirectPolicy())
 	res, err := client.R().
 		SetHeaders(loginHeaders).
 		SetFormDataFromValues(loginData).
@@ -1181,7 +1181,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 		log.Debugf("DEBUG: 登录响应 Status Code: %d", res.StatusCode())
 	}
 	// 恢复客户端的默认重定向策略，以免影响后续请求
-	base.RestyClient.SetRedirectPolicy(resty.FlexibleRedirectPolicy(10))
+	base.RestyFor(d).SetRedirectPolicy(resty.FlexibleRedirectPolicy(10))
 	log.Debugf("DEBUG: 登录响应 Headers: %+v", res.Header())
 
 	var sid, extractedCguid string
@@ -1224,7 +1224,7 @@ func (d *Yun139) step1_password_login() (string, error) {
 
 	// 提取并记录 cookies
 	loginUrlObj, _ := url.Parse(loginURL)
-	cookies := base.RestyClient.GetClient().Jar.Cookies(loginUrlObj)
+	cookies := base.RestyFor(d).GetClient().Jar.Cookies(loginUrlObj)
 	var cookieStrings []string
 	for _, cookie := range cookies {
 		cookieStrings = append(cookieStrings, cookie.Name+"="+cookie.Value)
@@ -1266,7 +1266,7 @@ func (d *Yun139) step2_get_single_token(sid string) (string, error) {
 	log.Debugf("DEBUG: 换passid 请求 URL: %s", exchangeArtifactURL)
 	log.Debugf("DEBUG: 换passid 请求 Headers: %+v", exchangePassidHeaders)
 
-	res, err := base.RestyClient.R().
+	res, err := base.RestyFor(d).R().
 		SetHeaders(exchangePassidHeaders).
 		Post(exchangeArtifactURL)
 
@@ -1453,7 +1453,7 @@ func (d *Yun139) yun139EncryptedRequest(url string, body interface{}, headers ma
 	payload := base64.StdEncoding.EncodeToString(append(iv, encryptedBody...))
 
 	// 4. Make the request
-	res, err := base.RestyClient.R().
+	res, err := base.RestyFor(d).R().
 		SetHeaders(headers).
 		SetBody(payload).
 		Post(url)

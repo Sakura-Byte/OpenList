@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	openlistnet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	sdkUserFile "github.com/halalcloud/golang-sdk-lite/halalcloud/services/userfile"
@@ -77,6 +79,7 @@ func (d *HalalCloudOpen) getLink(ctx context.Context, file model.Obj, args model
 	size, _ := strconv.ParseInt(result.FileSize, 10, 64)
 	chunks := getChunkSizes(result.Sizes)
 	resultRangeReader := func(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
+		ctx = openlistnet.WithHTTPClient(ctx, base.TransferClientFor(d))
 		length := httpRange.Length
 		if httpRange.Length < 0 || httpRange.Start+httpRange.Length >= size {
 			length = size - httpRange.Start

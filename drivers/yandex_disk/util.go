@@ -22,7 +22,7 @@ func (d *YandexDisk) refreshToken() error {
 			AccessToken  string `json:"access_token"`
 			ErrorMessage string `json:"text"`
 		}
-		_, err := base.RestyClient.R().
+		_, err := base.RestyFor(d).R().
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
@@ -52,7 +52,7 @@ func (d *YandexDisk) refreshToken() error {
 	u := "https://oauth.yandex.com/token"
 	var resp base.TokenResp
 	var e TokenErrResp
-	_, err := base.RestyClient.R().SetResult(&resp).SetError(&e).SetFormData(map[string]string{
+	_, err := base.RestyFor(d).R().SetResult(&resp).SetError(&e).SetFormData(map[string]string{
 		"grant_type":    "refresh_token",
 		"refresh_token": d.RefreshToken,
 		"client_id":     d.ClientID,
@@ -71,7 +71,7 @@ func (d *YandexDisk) refreshToken() error {
 
 func (d *YandexDisk) request(pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	u := "https://cloud-api.yandex.net/v1/disk/resources" + pathname
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Authorization", "OAuth "+d.AccessToken)
 	if callback != nil {
 		callback(req)

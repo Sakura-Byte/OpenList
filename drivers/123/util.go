@@ -167,7 +167,7 @@ func (d *Pan123) login() error {
 			"remember": true,
 		}
 	}
-	res, err := base.RestyClient.R().
+	res, err := base.RestyFor(d).R().
 		SetHeaders(map[string]string{
 			"origin":      "https://yun.123pan.com",
 			"referer":     "https://yun.123pan.com/",
@@ -205,7 +205,7 @@ func (d *Pan123) login() error {
 func (d *Pan123) Request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	isRetry := false
 do:
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"origin":        "https://yun.123pan.com",
 		"referer":       "https://yun.123pan.com/",

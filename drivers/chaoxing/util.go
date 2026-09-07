@@ -18,7 +18,7 @@ import (
 
 func (d *ChaoXing) requestDownload(pathname string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	u := d.conf.DowloadApi + pathname
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"Cookie":  d.Cookie,
 		"Accept":  "application/json, text/plain, */*",
@@ -44,7 +44,7 @@ func (d *ChaoXing) request(pathname string, method string, callback base.ReqCall
 	if strings.Contains(pathname, "getUploadConfig") {
 		u = pathname
 	}
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"Cookie":  d.Cookie,
 		"Accept":  "application/json, text/plain, */*",
@@ -174,7 +174,7 @@ func (d *ChaoXing) Login() (string, error) {
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Content-Length", strconv.Itoa(body.Len()))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := base.APIClientFor(d).Do(req)
 	if err != nil {
 		return "", err
 	}

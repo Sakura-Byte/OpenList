@@ -11,7 +11,7 @@ import (
 
 // 发送 GET 请求
 func (d *GithubReleases) GetRequest(url string) (*resty.Response, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Accept", "application/vnd.github+json")
 	req.SetHeader("X-GitHub-Api-Version", "2022-11-28")
 	if d.Addition.Token != "" {

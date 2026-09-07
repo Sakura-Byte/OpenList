@@ -97,7 +97,7 @@ func (d *GooglePhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 		"X-Goog-Upload-Raw-Size":     strconv.FormatInt(stream.GetSize(), 10),
 	}
 	url := "https://photoslibrary.googleapis.com/v1/uploads"
-	res, err := base.NoRedirectClient.R().SetHeaders(postHeaders).
+	res, err := base.NoRedirectFor(d).R().SetHeaders(postHeaders).
 		SetError(&e).
 		Post(url)
 

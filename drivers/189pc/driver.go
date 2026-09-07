@@ -80,7 +80,7 @@ func (y *Cloud189PC) Init(ctx context.Context) (err error) {
 	if y.ref == nil {
 		// 初始化请求客户端
 		if y.client == nil {
-			y.client = base.NewRestyClient().SetHeaders(map[string]string{
+			y.client = base.NewRestyFor(y).SetHeaders(map[string]string{
 				"Accept":  "application/json;charset=UTF-8",
 				"Referer": WEB_URL,
 			})
@@ -186,7 +186,7 @@ func (y *Cloud189PC) Link(ctx context.Context, file model.Obj, args model.LinkAr
 
 	// 重定向获取真实链接
 	downloadUrl.URL = strings.Replace(strings.ReplaceAll(downloadUrl.URL, "&amp;", "&"), "http://", "https://", 1)
-	res, err := base.NoRedirectClient.R().SetContext(ctx).SetDoNotParseResponse(true).Get(downloadUrl.URL)
+	res, err := base.NoRedirectFor(y).R().SetContext(ctx).SetDoNotParseResponse(true).Get(downloadUrl.URL)
 	if err != nil {
 		return nil, err
 	}

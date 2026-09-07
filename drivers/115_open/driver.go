@@ -41,7 +41,7 @@ func (d *Open115) GetAddition() driver.Additional {
 }
 
 func (d *Open115) Init(ctx context.Context) error {
-	d.client = sdk.New(sdk.WithRefreshToken(d.Addition.RefreshToken),
+	d.client = sdk.New(sdk.WithRestyClient(base.NewRestyV3For(d)), sdk.WithRefreshToken(d.Addition.RefreshToken),
 		sdk.WithAccessToken(d.Addition.AccessToken),
 		sdk.WithOnRefreshToken(func(s1, s2 string) {
 			d.Addition.AccessToken = s1

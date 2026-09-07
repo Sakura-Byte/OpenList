@@ -10,6 +10,7 @@ import (
 	stdpath "path"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
@@ -540,6 +541,7 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 				URL:           link.URL,
 				Header:        link.Header,
 				RangeReader:   link.RangeReader,
+				HTTPClient:    link.HTTPClient,
 				Concurrency:   link.Concurrency,
 				PartSize:      link.PartSize,
 				ContentLength: link.ContentLength,
@@ -569,6 +571,7 @@ func (d *Alias) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (
 		}
 		return &model.Link{
 			RangeReader:      stream.RangeReaderFunc(rr),
+			HTTPClient:       base.TransferClientFor(d),
 			SyncClosers:      utils.NewSyncClosers(linkClosers...),
 			RequireReference: requireReference,
 		}, nil

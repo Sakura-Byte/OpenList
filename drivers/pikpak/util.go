@@ -19,7 +19,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	netutil "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
@@ -109,7 +108,7 @@ func (d *PikPak) login() error {
 	}
 
 	var e ErrResp
-	res, err := base.RestyClient.SetRetryCount(1).R().SetError(&e).SetBody(base.Json{
+	res, err := base.RestyFor(d).SetRetryCount(1).R().SetError(&e).SetBody(base.Json{
 		"captcha_token": d.GetCaptchaToken(),
 		"client_id":     d.ClientID,
 		"client_secret": d.ClientSecret,
@@ -132,7 +131,7 @@ func (d *PikPak) login() error {
 func (d *PikPak) refreshToken(refreshToken string) error {
 	url := "https://user.mypikpak.net/v1/auth/token"
 	var e ErrResp
-	res, err := base.RestyClient.SetRetryCount(1).R().SetError(&e).
+	res, err := base.RestyFor(d).SetRetryCount(1).R().SetError(&e).
 		SetHeader("user-agent", "").SetBody(base.Json{
 		"client_id":     d.ClientID,
 		"client_secret": d.ClientSecret,
@@ -169,7 +168,7 @@ func (d *PikPak) refreshToken(refreshToken string) error {
 }
 
 func (d *PikPak) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		//"Authorization":   "Bearer " + d.AccessToken,
 		"User-Agent":      d.GetUserAgent(),
@@ -419,7 +418,7 @@ func (d *PikPak) refreshCaptchaToken(action string, metas map[string]string) err
 }
 
 func (d *PikPak) UploadByOSS(ctx context.Context, params *S3Params, s model.FileStreamer, up driver.UpdateProgress) error {
-	ossClient, err := netutil.NewOSSClient(params.Endpoint, params.AccessKeyID, params.AccessKeySecret)
+	ossClient, err := base.NewOSSClientFor(d, params.Endpoint, params.AccessKeyID, params.AccessKeySecret)
 	if err != nil {
 		return err
 	}
@@ -452,7 +451,7 @@ func (d *PikPak) UploadByMultipart(ctx context.Context, params *S3Params, fileSi
 		bucket    *oss.Bucket
 	)
 
-	if ossClient, err = netutil.NewOSSClient(params.Endpoint, params.AccessKeyID, params.AccessKeySecret); err != nil {
+	if ossClient, err = base.NewOSSClientFor(d, params.Endpoint, params.AccessKeyID, params.AccessKeySecret); err != nil {
 		return err
 	}
 

@@ -39,7 +39,7 @@ func (d *QuarkOpen) request(ctx context.Context, pathname string, method string,
 		tm, token, reqID = d.generateReqSign(method, pathname, d.Addition.SignKey)
 	}
 
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetContext(ctx)
 	req.SetHeaders(map[string]string{
 		"Accept":          "application/json, text/plain, */*",
@@ -341,7 +341,7 @@ func (d *QuarkOpen) upPart(ctx context.Context, upUrlInfo UpUrlInfo, partNumber 
 	req.Header.Set("User-Agent", "Go-http-client/1.1")
 
 	// 发送请求
-	resp, err := base.HttpClient.Do(req)
+	resp, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -439,7 +439,7 @@ func (d *QuarkOpen) _refreshToken() (string, string, error) {
 	if d.UseOnlineAPI && d.APIAddress != "" {
 		u := d.APIAddress
 		var resp RefreshTokenOnlineAPIResp
-		_, err := base.RestyClient.R().
+		_, err := base.RestyFor(d).R().
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,

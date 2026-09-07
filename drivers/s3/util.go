@@ -9,7 +9,9 @@ import (
 	"path"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/aws/aws-sdk-go/aws"
@@ -33,13 +35,14 @@ func (d *S3) initSession() error {
 	var err error
 	accessKeyID, secretAccessKey, sessionToken := d.AccessKeyID, d.SecretAccessKey, d.SessionToken
 	if d.config.Name == "Doge" {
-		credentialsTmp, err := getCredentials(d.AccessKeyID, d.SecretAccessKey)
+		credentialsTmp, err := getCredentials(base.APIClientFor(d), d.AccessKeyID, d.SecretAccessKey)
 		if err != nil {
 			return err
 		}
 		accessKeyID, secretAccessKey, sessionToken = credentialsTmp.AccessKeyId, credentialsTmp.SecretAccessKey, credentialsTmp.SessionToken
 	}
 	cfg := &aws.Config{
+		HTTPClient:       base.APIClientFor(d),
 		Credentials:      credentials.NewStaticCredentials(accessKeyID, secretAccessKey, sessionToken),
 		Region:           &d.Region,
 		Endpoint:         &d.Endpoint,
@@ -57,6 +60,12 @@ const (
 
 func (d *S3) getClient(clientType int) *s3.S3 {
 	client := s3.New(d.Session)
+	client.Handlers.Build.PushBack(func(r *request.Request) {
+		switch r.Operation.Name {
+		case "GetObject", "PutObject", "UploadPart", "SelectObjectContent":
+			r.HTTPRequest = r.HTTPRequest.WithContext(net.WithHTTPClient(r.HTTPRequest.Context(), base.TransferClientFor(d)))
+		}
+	})
 	if d.UserAgent != "" {
 		client.Handlers.Build.PushBack(func(r *request.Request) {
 			r.HTTPRequest.Header.Set("User-Agent", d.UserAgent)

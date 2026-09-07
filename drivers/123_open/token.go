@@ -51,7 +51,7 @@ func (d *Open123) flushAccessToken() error {
 	// Official app renewapi response contains access_token, refresh_token and expires_in.
 	if d.UseOnlineAPI && d.RefreshToken != "" && len(d.APIAddress) > 0 {
 		var resp RefreshTokenResp
-		_, err := base.RestyClient.R().
+		_, err := base.RestyFor(d).R().
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
@@ -94,7 +94,7 @@ func (d *Open123) flushAccessToken() error {
 
 	// Developer API response contains code/message/data(accessToken, expiredAt).
 	if d.ClientID != "" && d.ClientSecret != "" {
-		req := base.RestyClient.R()
+		req := base.RestyFor(d).R()
 		req.SetHeaders(map[string]string{
 			"platform":     "open_platform",
 			"Content-Type": "application/json",

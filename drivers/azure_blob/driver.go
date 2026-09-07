@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/http"
 	"path"
 	"regexp"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -62,6 +64,12 @@ func (d *AzureBlob) Init(ctx context.Context) error {
 	// Initialize Azure Blob client with retry policy
 	client, err := azblob.NewClientWithSharedKeyCredential(endpoint, credential,
 		&azblob.ClientOptions{ClientOptions: azcore.ClientOptions{
+			Transport: base.RouteClient(d, base.APIClientFor(d), func(r *http.Request) bool {
+				query := r.URL.Query()
+				return query.Get("restype") != "container" &&
+					(r.Method == http.MethodGet && query.Get("comp") == "" ||
+						r.Method == http.MethodPut && (query.Get("comp") == "" || query.Get("comp") == "block") && r.Header.Get("x-ms-copy-source") == "")
+			}),
 			Retry: policy.RetryOptions{
 				MaxRetries: MaxRetries,
 				RetryDelay: RetryDelay,

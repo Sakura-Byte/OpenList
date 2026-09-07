@@ -44,7 +44,7 @@ func (x *Thunder) Init(ctx context.Context) (err error) {
 	if x.XunLeiCommon == nil {
 		x.XunLeiCommon = &XunLeiCommon{
 			Common: &Common{
-				client: base.NewRestyClient(),
+				client: base.NewRestyFor(x),
 				Algorithms: []string{
 					"9uJNVj/wLmdwKrJaVj/omlQ",
 					"Oz64Lp0GigmChHMf/6TNfxx7O9PyopcczMsnf",
@@ -157,7 +157,7 @@ func (x *ThunderExpert) Init(ctx context.Context) (err error) {
 		x.identity = identity
 		x.XunLeiCommon = &XunLeiCommon{
 			Common: &Common{
-				client: base.NewRestyClient(),
+				client: base.NewRestyFor(x),
 
 				DeviceID: func() string {
 					if len(x.DeviceID) != 32 {

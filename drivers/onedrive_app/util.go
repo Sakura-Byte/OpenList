@@ -67,7 +67,7 @@ func (d *OnedriveAPP) _accessToken() error {
 	url := d.GetMetaUrl(true, "") + "/" + d.TenantID + "/oauth2/token"
 	var resp base.TokenResp
 	var e TokenErr
-	_, err := base.RestyClient.R().SetResult(&resp).SetError(&e).SetFormData(map[string]string{
+	_, err := base.RestyFor(d).R().SetResult(&resp).SetError(&e).SetFormData(map[string]string{
 		"grant_type":    "client_credentials",
 		"client_id":     d.ClientID,
 		"client_secret": d.ClientSecret,
@@ -89,7 +89,7 @@ func (d *OnedriveAPP) _accessToken() error {
 }
 
 func (d *OnedriveAPP) Request(url string, method string, callback base.ReqCallback, resp interface{}, noRetry ...bool) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	if callback != nil {
 		callback(req)
@@ -180,7 +180,7 @@ func (d *OnedriveAPP) upBig(ctx context.Context, dstDir model.Obj, stream model.
 				}
 				req.ContentLength = byteSize
 				req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, stream.GetSize()))
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}

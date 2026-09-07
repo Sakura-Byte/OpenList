@@ -105,7 +105,7 @@ func (d *CFImgBed) standardUpload(ctx context.Context, dstDir model.Obj, file mo
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("Authorization", "Bearer "+d.Token)
 	req.ContentLength = int64(b.Len()) + file.GetSize()
-	res, err := base.HttpClient.Do(req)
+	res, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -155,9 +155,7 @@ func (d *CFImgBed) chunkedUpload(ctx context.Context, dstDir model.Obj, file mod
 	fileMime := file.GetMimetype()
 	fileName := file.GetName()
 
-	var chunkSizeMap = map[string]int64{
-
-	}
+	var chunkSizeMap = map[string]int64{}
 	chunkSize := chunkSizeMap[channelType]
 	if chunkSize == 0 {
 		chunkSize = 5 * 1024 * 1024
@@ -251,7 +249,7 @@ func (d *CFImgBed) chunkedUpload(ctx context.Context, dstDir model.Obj, file mod
 				req.Header.Set("Authorization", "Bearer "+d.Token)
 				req.ContentLength = int64(headSize) + sizeToRead + int64(b.Len()-headSize)
 
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}
@@ -442,7 +440,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 
 					req.ContentLength = sizeToRead
 
-					res, err := base.HttpClient.Do(req)
+					res, err := base.TransferClientFor(d).Do(req)
 					if err != nil {
 						return err
 					}
@@ -477,7 +475,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 			mergeReq.Header.Set("Authorization", "Bearer "+d.Token)
 		}
 
-		res, err := base.HttpClient.Do(mergeReq)
+		res, err := base.APIClientFor(d).Do(mergeReq)
 		if err != nil {
 			return nil, err
 		}
@@ -504,7 +502,7 @@ func (d *CFImgBed) hfDirectUpload(ctx context.Context, dstDir model.Obj, file mo
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-		res, err := base.HttpClient.Do(req)
+		res, err := base.TransferClientFor(d).Do(req)
 		if err != nil {
 			return nil, err
 		}

@@ -85,7 +85,7 @@ func (d *Onedrive) _refreshToken() error {
 			AccessToken  string `json:"access_token"`
 			ErrorMessage string `json:"text"`
 		}
-		_, err := base.RestyClient.R().
+		_, err := base.RestyFor(d).R().
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
@@ -115,7 +115,7 @@ func (d *Onedrive) _refreshToken() error {
 	url := d.GetMetaUrl(true, "") + "/common/oauth2/v2.0/token"
 	var resp base.TokenResp
 	var e TokenErr
-	_, err := base.RestyClient.R().SetResult(&resp).SetError(&e).SetFormData(map[string]string{
+	_, err := base.RestyFor(d).R().SetResult(&resp).SetError(&e).SetFormData(map[string]string{
 		"grant_type":    "refresh_token",
 		"client_id":     d.ClientID,
 		"client_secret": d.ClientSecret,
@@ -140,7 +140,7 @@ func (d *Onedrive) Request(url string, method string, callback base.ReqCallback,
 	if d.ref != nil {
 		return d.ref.Request(url, method, callback, resp)
 	}
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	if callback != nil {
 		callback(req)
@@ -824,7 +824,7 @@ func (d *Onedrive) upBig(ctx context.Context, dstDir model.Obj, stream model.Fil
 				}
 				req.ContentLength = byteSize
 				req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", finish, finish+byteSize-1, stream.GetSize()))
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}

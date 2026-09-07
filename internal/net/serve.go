@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	gonet "net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -233,7 +234,7 @@ func RequestHttp(ctx context.Context, httpMethod string, headerOverride http.Hea
 		return nil, err
 	}
 	req.Header = headerOverride
-	res, err := HttpClient().Do(req)
+	res, err := httpClientForContext(ctx).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -284,9 +285,13 @@ func HttpClient() *http.Client {
 }
 
 func NewHttpClient() *http.Client {
+	var tlsConfig *tls.Config
+	if conf.Conf != nil {
+		tlsConfig = &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify}
+	}
 	transport := &http.Transport{
 		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
+		TLSClientConfig: tlsConfig,
 	}
 
 	SetProxyIfConfigured(transport)
@@ -302,6 +307,13 @@ type safeTransport struct {
 }
 
 func (t *safeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// A proxied request connects to the proxy, so resolving the upstream host
+	// locally would both defeat the proxy and reject valid private DNS names.
+	if proxy, err := proxyURLForTransport(t.base, req); err != nil {
+		return nil, err
+	} else if proxy != nil {
+		return t.base.RoundTrip(req)
+	}
 	host := req.URL.Hostname()
 	addrs, err := gonet.DefaultResolver.LookupIPAddr(req.Context(), host)
 	if err != nil || len(addrs) == 0 {
@@ -313,6 +325,22 @@ func (t *safeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 	return t.base.RoundTrip(req)
+}
+
+func proxyURLForTransport(transport http.RoundTripper, req *http.Request) (*url.URL, error) {
+	switch t := transport.(type) {
+	case *http.Transport:
+		if t.Proxy == nil {
+			return nil, nil
+		}
+		return t.Proxy(req)
+	case *safeTransport:
+		return proxyURLForTransport(t.base, req)
+	case proxyErrorTransport:
+		return nil, t.err
+	default:
+		return nil, nil
+	}
 }
 
 var ErrCloudMetadataEndpoint = errors.New("access to cloud metadata endpoint is not allowed")

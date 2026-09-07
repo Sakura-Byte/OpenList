@@ -213,7 +213,7 @@ func (d *Dropbox) Put(ctx context.Context, dstDir model.Obj, stream model.FileSt
 		}
 		req.Header.Set("Dropbox-API-Arg", argsJson)
 
-		res, err := base.HttpClient.Do(req)
+		res, err := base.TransferClientFor(d).Do(req)
 		if err != nil {
 			return err
 		}

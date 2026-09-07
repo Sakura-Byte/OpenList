@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/pkg/http_range"
 	"github.com/pquerna/otp/totp"
 	"github.com/rclone/rclone/lib/readers"
@@ -37,6 +39,10 @@ func (d *Mega) GetAddition() driver.Additional {
 func (d *Mega) Init(ctx context.Context) error {
 	var twoFACode = d.TwoFACode
 	d.c = mega.New()
+	d.c.SetClient(base.RouteClient(d, base.APIClientFor(d), func(r *http.Request) bool {
+		// go-mega sends its control commands to /cs and its events to /sc.
+		return r.URL.Path != "/cs" && r.URL.Path != "/sc"
+	}))
 	if d.TwoFASecret != "" {
 		code, err := totp.GenerateCode(d.TwoFASecret, time.Now())
 		if err != nil {

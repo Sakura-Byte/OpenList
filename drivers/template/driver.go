@@ -22,6 +22,8 @@ func (d *Template) GetAddition() driver.Additional {
 }
 
 func (d *Template) Init(ctx context.Context) error {
+	// Use base.RestyFor(d)/base.APIClientFor(d) for API calls and
+	// base.TransferRestyFor(d)/base.TransferClientFor(d) for file content.
 	// TODO login / refresh token
 	//op.MustSaveDriverStorage(d)
 	return nil

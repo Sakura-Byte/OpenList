@@ -23,7 +23,7 @@ func (d *Dropbox) refreshToken() error {
 			AccessToken  string `json:"access_token"`
 			ErrorMessage string `json:"text"`
 		}
-		_, err := base.RestyClient.R().
+		_, err := base.RestyFor(d).R().
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
@@ -47,7 +47,7 @@ func (d *Dropbox) refreshToken() error {
 	}
 	url := d.base + "/oauth2/token"
 	var tokenResp TokenResp
-	resp, err := base.RestyClient.R().
+	resp, err := base.RestyFor(d).R().
 		//ForceContentType("application/x-www-form-urlencoded").
 		//SetBasicAuth(d.ClientID, d.ClientSecret).
 		SetFormData(map[string]string{
@@ -71,7 +71,7 @@ func (d *Dropbox) refreshToken() error {
 }
 
 func (d *Dropbox) request(uri, method string, callback base.ReqCallback, retry ...bool) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	if d.RootNamespaceId != "" {
 		apiPathRootJson, err := utils.Json.MarshalToString(map[string]interface{}{
@@ -208,7 +208,7 @@ func (d *Dropbox) finishUploadSession(ctx context.Context, toPath string, offset
 	}
 	req.Header.Set("Dropbox-API-Arg", argsJson)
 
-	res, err := base.HttpClient.Do(req)
+	res, err := base.APIClientFor(d).Do(req)
 	if err != nil {
 		log.Errorf("failed to update file when finish session, err: %+v", err)
 		return err
@@ -234,7 +234,7 @@ func (d *Dropbox) startUploadSession(ctx context.Context) (string, error) {
 	}
 	req.Header.Set("Dropbox-API-Arg", "{\"close\":false}")
 
-	res, err := base.HttpClient.Do(req)
+	res, err := base.APIClientFor(d).Do(req)
 	if err != nil {
 		log.Errorf("failed to update file when start session, err: %+v", err)
 		return "", err

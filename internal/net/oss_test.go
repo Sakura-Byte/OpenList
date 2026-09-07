@@ -3,6 +3,7 @@ package net
 import (
 	"net/http"
 	"net/url"
+	"runtime"
 	"testing"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -16,11 +17,13 @@ func TestNewOSSClientUsesEnvironmentHTTPSProxy(t *testing.T) {
 	}()
 
 	t.Setenv("HTTP_PROXY", "")
-	t.Setenv("http_proxy", "")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
-	t.Setenv("https_proxy", "")
 	t.Setenv("NO_PROXY", "")
-	t.Setenv("no_proxy", "")
+	if runtime.GOOS != "windows" {
+		t.Setenv("http_proxy", "")
+		t.Setenv("https_proxy", "")
+		t.Setenv("no_proxy", "")
+	}
 
 	client, err := NewOSSClient("https://oss-cn-hangzhou.aliyuncs.com", "test-access-key", "test-access-secret")
 	if err != nil {

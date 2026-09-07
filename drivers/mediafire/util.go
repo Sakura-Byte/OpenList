@@ -78,7 +78,7 @@ func (d *Mediafire) getSessionToken(ctx context.Context) (string, error) {
 	req.Header.Set("User-Agent", d.userAgent)
 	// req.Header.Set("Connection", "keep-alive")
 
-	resp, err := base.HttpClient.Do(req)
+	resp, err := base.APIClientFor(d).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -314,7 +314,7 @@ func (d *Mediafire) apiRequest(ctx context.Context, method, endpoint string, que
 		}
 	}
 
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetContext(ctx)
 	d.setCommonHeaders(req)
 
@@ -550,7 +550,7 @@ func (d *Mediafire) uploadUnits(ctx context.Context, file model.FileStreamer, ch
 				fmt.Printf("  Upload Key: %s\n", uploadKey)
 				fmt.Printf("  Action Token: %s\n", actionToken) */
 
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}

@@ -33,6 +33,7 @@ func makeStorageResp(ctx *gin.Context, storages []model.Storage) []*StorageResp 
 	detailsChan := make(chan detailWithIndex, len(storages))
 	workerCount := 0
 	for i, s := range storages {
+		_ = s.NormalizeProxy()
 		ret[i] = &StorageResp{
 			Storage:      s,
 			MountDetails: nil,
@@ -96,6 +97,10 @@ func CreateStorage(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+	if err := req.NormalizeProxy(); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
 	if id, err := op.CreateStorage(c.Request.Context(), req); err != nil {
 		common.ErrorWithDataResp(c, err, 500, gin.H{
 			"id": id,
@@ -108,8 +113,38 @@ func CreateStorage(c *gin.Context) {
 }
 
 func UpdateStorage(c *gin.Context) {
-	var req model.Storage
-	if err := c.ShouldBind(&req); err != nil {
+	var body struct {
+		model.Storage
+		APIProxyMode      *model.ProxyMode `json:"api_proxy_mode"`
+		APIProxyURL       *string          `json:"api_proxy_url"`
+		TransferProxyMode *model.ProxyMode `json:"transfer_proxy_mode"`
+		TransferProxyURL  *string          `json:"transfer_proxy_url"`
+	}
+	if err := c.ShouldBind(&body); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	req := body.Storage
+	old, err := db.GetStorageById(req.ID)
+	if err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	req.APIProxyMode, req.APIProxyURL = old.APIProxyMode, old.APIProxyURL
+	req.TransferProxyMode, req.TransferProxyURL = old.TransferProxyMode, old.TransferProxyURL
+	if body.APIProxyMode != nil {
+		req.APIProxyMode = *body.APIProxyMode
+	}
+	if body.APIProxyURL != nil {
+		req.APIProxyURL = *body.APIProxyURL
+	}
+	if body.TransferProxyMode != nil {
+		req.TransferProxyMode = *body.TransferProxyMode
+	}
+	if body.TransferProxyURL != nil {
+		req.TransferProxyURL = *body.TransferProxyURL
+	}
+	if err := req.NormalizeProxy(); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
@@ -174,6 +209,7 @@ func GetStorage(c *gin.Context) {
 		common.ErrorResp(c, err, 500, true)
 		return
 	}
+	_ = storage.NormalizeProxy()
 	common.SuccessResp(c, storage)
 }
 

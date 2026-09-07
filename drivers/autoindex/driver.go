@@ -93,7 +93,7 @@ func (d *AutoIndex) GetRoot(ctx context.Context) (model.Obj, error) {
 }
 
 func (d *AutoIndex) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
-	res, err := base.RestyClient.R().
+	res, err := base.RestyFor(d).R().
 		SetContext(ctx).
 		SetDoNotParseResponse(true).
 		Get(dir.GetPath())
@@ -152,7 +152,7 @@ func (d *AutoIndex) Link(ctx context.Context, file model.Obj, args model.LinkArg
 	if _, ok := file.(*exactSizeObj); ok || args.Redirect {
 		return &model.Link{URL: file.GetPath()}, nil
 	}
-	res, err := base.RestyClient.R().
+	res, err := base.RestyFor(d).R().
 		SetContext(ctx).
 		SetDoNotParseResponse(true).
 		Head(file.GetPath())

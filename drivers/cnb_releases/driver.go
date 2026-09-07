@@ -216,7 +216,7 @@ func (d *CnbReleases) Put(ctx context.Context, dstDir model.Obj, file model.File
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("User-Agent", base.UserAgent)
-	httpResp, err := base.HttpClient.Do(req)
+	httpResp, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}

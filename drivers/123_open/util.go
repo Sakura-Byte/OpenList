@@ -43,7 +43,7 @@ func (d *Open123) Request(apiInfo *ApiInfo, method string, callback base.ReqCall
 		if err != nil {
 			return nil, err
 		}
-		req := base.RestyClient.R()
+		req := base.RestyFor(d).R()
 		req.SetHeaders(map[string]string{
 			"authorization": "Bearer " + token,
 			"platform":      "open_platform",

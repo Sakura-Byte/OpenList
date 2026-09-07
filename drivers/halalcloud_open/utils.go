@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	openlistnet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	sdkUserFile "github.com/halalcloud/golang-sdk-lite/halalcloud/services/userfile"
 	"github.com/ipfs/go-cid"
@@ -24,7 +25,7 @@ func (oo *openObject) getChunk(_ context.Context) (err error) {
 	}
 	var chunk []byte
 	err = utils.Retry(3, time.Second, func() (err error) {
-		chunk, err = getRawFiles(oo.d[oo.id])
+		chunk, err = getRawFiles(oo.ctx, oo.d[oo.id])
 		return err
 	})
 	if err != nil {
@@ -135,14 +136,15 @@ func (oo *openObject) ChunkLocation(id int) (position int64, size int, err error
 	return (oo.chunks)[id].position, (oo.chunks)[id].size, nil
 }
 
-func getRawFiles(addr *sdkUserFile.SliceDownloadInfo) ([]byte, error) {
+func getRawFiles(ctx context.Context, addr *sdkUserFile.SliceDownloadInfo) ([]byte, error) {
 
 	if addr == nil {
 		return nil, errors.New("addr is nil")
 	}
 
-	client := http.Client{
-		Timeout: time.Duration(60 * time.Second), // Set timeout to 60 seconds
+	client := openlistnet.HTTPClientFromContext(ctx)
+	if client == nil {
+		client = &http.Client{Timeout: time.Duration(60 * time.Second)}
 	}
 	resp, err := client.Get(addr.DownloadAddress)
 	if err != nil {

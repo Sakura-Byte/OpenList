@@ -9,7 +9,7 @@ import (
 
 func (d *OpenListShare) request(api, method string, callback base.ReqCallback) ([]byte, int, error) {
 	url := d.Address + "/api" + api
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	if callback != nil {
 		callback(req)
 	}

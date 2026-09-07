@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/archive/tool"
 	"github.com/OpenListTeam/OpenList/v4/internal/cache"
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -406,6 +407,9 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
 	if ol, ok := extractCache.Get(key); ok {
+		if ol.link.HTTPClient == nil {
+			ol.link.HTTPClient = base.TransferClientFor(storage)
+		}
 		if ol.link.Expiration != nil || ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
 			return ol.link, ol.obj, nil
 		}
@@ -430,6 +434,9 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 			return nil, nil, err
 		}
 		if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+			if ol.link.HTTPClient == nil {
+				ol.link.HTTPClient = base.TransferClientFor(storage)
+			}
 			return ol.link, ol.obj, nil
 		}
 	}
@@ -451,6 +458,9 @@ func driverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return nil, errors.WithStack(errs.NotFile)
 	}
 	link, err := storageAr.Extract(ctx, archiveFile, args)
+	if err == nil && link != nil && link.HTTPClient == nil {
+		link.HTTPClient = base.TransferClientFor(storage)
+	}
 	return &objWithLink{link: link, obj: extracted}, err
 }
 

@@ -111,7 +111,7 @@ func (d *Teldrive) getFilePart(fileId string) ([]FilePart, error) {
 
 func (d *Teldrive) singleUploadRequest(ctx context.Context, fileId string, callback base.ReqCallback, resp any) error {
 	url := d.Address + "/api/uploads/" + fileId
-	client := resty.New().SetTimeout(0)
+	client := base.NewTransferRestyFor(d).SetTimeout(0)
 
 	req := client.R().
 		SetContext(ctx)

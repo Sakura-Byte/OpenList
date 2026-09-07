@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -155,7 +156,7 @@ func (d *Degoo) uploadS3(ctx context.Context, auths *DegooGetBucketWriteAuth4Dat
 	req.Header.Add("ngsw-bypass", "1")
 	req.Header.Add("Content-Type", w.FormDataContentType())
 
-	res, err := d.client.Do(req)
+	res, err := base.TransferClientFor(d).Do(req)
 	if err != nil {
 		return err
 	}

@@ -36,7 +36,7 @@ func (d *AliDoc) Init(ctx context.Context) error {
 	if d.RootFolderID == "" {
 		return fmt.Errorf("root folder id is empty")
 	}
-	d.client = newClient()
+	d.client = newClient(d)
 	if err := d.checkCookie(ctx); err != nil {
 		return err
 	}

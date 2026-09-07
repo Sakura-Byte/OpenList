@@ -74,7 +74,7 @@ func (d *GoogleDrive) refreshToken() error {
 			AccessToken  string `json:"access_token"`
 			ErrorMessage string `json:"text"`
 		}
-		_, err := base.RestyClient.R().
+		_, err := base.RestyFor(d).R().
 			SetResult(&resp).
 			SetQueryParams(map[string]string{
 				"refresh_ui": d.RefreshToken,
@@ -177,7 +177,7 @@ func (d *GoogleDrive) refreshToken() error {
 
 		var resp base.TokenResp
 		var e TokenError
-		res, err := base.RestyClient.R().SetResult(&resp).SetError(&e).
+		res, err := base.RestyFor(d).R().SetResult(&resp).SetError(&e).
 			SetFormData(map[string]string{
 				"assertion":  assertion,
 				"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
@@ -197,7 +197,7 @@ func (d *GoogleDrive) refreshToken() error {
 	url := "https://www.googleapis.com/oauth2/v4/token"
 	var resp base.TokenResp
 	var e TokenError
-	res, err := base.RestyClient.R().SetResult(&resp).SetError(&e).
+	res, err := base.RestyFor(d).R().SetResult(&resp).SetError(&e).
 		SetFormData(map[string]string{
 			"client_id":     d.ClientID,
 			"client_secret": d.ClientSecret,
@@ -216,7 +216,7 @@ func (d *GoogleDrive) refreshToken() error {
 }
 
 func (d *GoogleDrive) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Authorization", "Bearer "+d.AccessToken)
 	req.SetQueryParam("includeItemsFromAllDrives", "true")
 	req.SetQueryParam("supportsAllDrives", "true")
@@ -902,7 +902,7 @@ func (d *GoogleDrive) chunkUpload(ctx context.Context, file model.FileStreamer, 
 				"Content-Length": {strconv.FormatInt(chunkSize, 10)},
 				"Content-Range":  {fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkSize-1, file.GetSize())},
 			}
-			res, err := base.HttpClient.Do(req)
+			res, err := base.TransferClientFor(d).Do(req)
 			if err != nil {
 				return err
 			}

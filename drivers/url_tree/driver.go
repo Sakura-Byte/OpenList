@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -31,7 +32,7 @@ func (d *Urls) GetAddition() driver.Additional {
 }
 
 func (d *Urls) Init(ctx context.Context) error {
-	node, err := BuildTree(d.UrlStructure, d.HeadSize)
+	node, err := BuildTree(d.UrlStructure, d.HeadSize, base.RestyFor(d))
 	if err != nil {
 		return err
 	}

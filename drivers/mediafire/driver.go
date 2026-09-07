@@ -123,7 +123,7 @@ func (d *Mediafire) Link(ctx context.Context, file model.Obj, args model.LinkArg
 		return nil, err
 	}
 
-	res, err := base.NoRedirectClient.R().SetDoNotParseResponse(true).SetContext(ctx).Head(downloadUrl)
+	res, err := base.NoRedirectFor(d).R().SetDoNotParseResponse(true).SetContext(ctx).Head(downloadUrl)
 	if err != nil {
 		return nil, err
 	}

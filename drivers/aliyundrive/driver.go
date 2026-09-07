@@ -301,7 +301,7 @@ func (d *AliDrive) Put(ctx context.Context, dstDir model.Obj, streamer model.Fil
 		if err != nil {
 			return err
 		}
-		res, err := base.HttpClient.Do(req)
+		res, err := base.TransferClientFor(d).Do(req)
 		if err != nil {
 			return err
 		}

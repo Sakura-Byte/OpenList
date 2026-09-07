@@ -67,7 +67,7 @@ const (
 // do others that not defined in Driver interface
 func (d *Doubao) request(path string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
 	reqUrl := BaseURL + path
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeader("Cookie", d.Cookie)
 	if callback != nil {
 		callback(req)
@@ -240,7 +240,7 @@ func (d *Doubao) signRequest(req *resty.Request, method, tokenType, uploadUrl st
 }
 
 func (d *Doubao) requestApi(url, method, tokenType string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	req.SetHeaders(map[string]string{
 		"user-agent": base.UserAgentNT,
 	})
@@ -486,7 +486,7 @@ func (d *Doubao) Upload(ctx context.Context, config *UploadConfig, dstDir model.
 			"Content-Length":      {strconv.FormatInt(file.GetSize(), 10)},
 			"Content-Disposition": {fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI))},
 		}
-		res, err := base.HttpClient.Do(req)
+		res, err := base.TransferClientFor(d).Do(req)
 		if err != nil {
 			return err
 		}
@@ -616,7 +616,7 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 					"Content-Length":      {strconv.FormatInt(size, 10)},
 					"Content-Disposition": {fmt.Sprintf("attachment; filename=%s", url.QueryEscape(storeInfo.StoreURI))},
 				}
-				res, err := base.HttpClient.Do(req)
+				res, err := base.TransferClientFor(d).Do(req)
 				if err != nil {
 					return err
 				}
@@ -686,12 +686,7 @@ func (d *Doubao) UploadByMultipart(ctx context.Context, config *UploadConfig, fi
 
 // 统一上传请求方法
 func (d *Doubao) uploadRequest(uploadUrl string, method string, storeInfo StoreInfo, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	client := resty.New()
-	client.SetTransport(&http.Transport{
-		DisableKeepAlives: true,  // 禁用连接复用
-		ForceAttemptHTTP2: false, // 强制使用HTTP/1.1
-	})
-	client.SetTimeout(UploadTimeout)
+	client := base.NewTransferRestyFor(d).SetTimeout(UploadTimeout)
 
 	req := client.R()
 	req.SetHeaders(map[string]string{

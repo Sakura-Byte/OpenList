@@ -21,6 +21,10 @@ import (
 //}{m: make(map[string]*SpCookie)}
 
 func GetCookie(username, password, siteUrl string) (string, error) {
+	return GetCookieWithHTTPClient(username, password, siteUrl, nil)
+}
+
+func GetCookieWithHTTPClient(username, password, siteUrl string, client *http.Client) (string, error) {
 	//cookiesMap.Lock()
 	//defer cookiesMap.Unlock()
 	//spCookie, ok := cookiesMap.m[username]
@@ -31,7 +35,7 @@ func GetCookie(username, password, siteUrl string) (string, error) {
 	//	}
 	//}
 	//log.Debugln("fetch new cookie")
-	ca := New(username, password, siteUrl)
+	ca := NewWithHTTPClient(username, password, siteUrl, client)
 	tokenConf, err := ca.Cookies()
 	if err != nil {
 		return "", err

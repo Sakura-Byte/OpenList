@@ -154,7 +154,7 @@ func (y *Cloud189TV) put(ctx context.Context, url string, headers map[string]str
 	}
 
 	// 请求完成后http.Client会Close Request.Body
-	resp, err := base.HttpClient.Do(req)
+	resp, err := base.TransferClientFor(y).Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	openlistnet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	pbPublicUser "github.com/city404/v6-public-rpc-proto/go/v6/user"
 	pubUserFile "github.com/city404/v6-public-rpc-proto/go/v6/userfile"
@@ -218,14 +219,15 @@ func (d *HalalCloud) GetCurrentDir(dir model.Obj) string {
 type Common struct {
 }
 
-func getRawFiles(addr *pubUserFile.SliceDownloadInfo) ([]byte, error) {
+func getRawFiles(ctx context.Context, addr *pubUserFile.SliceDownloadInfo) ([]byte, error) {
 
 	if addr == nil {
 		return nil, errors.New("addr is nil")
 	}
 
-	client := http.Client{
-		Timeout: time.Duration(60 * time.Second), // Set timeout to 5 seconds
+	client := openlistnet.HTTPClientFromContext(ctx)
+	if client == nil {
+		client = &http.Client{Timeout: time.Duration(60 * time.Second)}
 	}
 	resp, err := client.Get(addr.DownloadAddress)
 	if err != nil {
@@ -287,7 +289,7 @@ func (oo *openObject) getChunk(ctx context.Context) (err error) {
 	}
 	var chunk []byte
 	err = utils.Retry(3, time.Second, func() (err error) {
-		chunk, err = getRawFiles(oo.d[oo.id])
+		chunk, err = getRawFiles(oo.ctx, oo.d[oo.id])
 		return err
 	})
 	if err != nil {

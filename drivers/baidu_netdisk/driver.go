@@ -21,7 +21,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
-	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/pkg/errgroup"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/avast/retry-go"
@@ -455,7 +454,7 @@ func (d *BaiduNetdisk) uploadSlice(ctx context.Context, uploadUrl string, params
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.ContentLength = int64(b.Len()) + file.Size()
 
-	client := net.NewHttpClient()
+	client := base.TransferClientFor(d)
 	if d.UploadSliceTimeout > 0 {
 		client.Timeout = time.Second * time.Duration(d.UploadSliceTimeout)
 	} else {

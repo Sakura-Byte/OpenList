@@ -2,6 +2,7 @@ package _115
 
 import (
 	"errors"
+
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	driver115 "github.com/SheltonZhu/115driver/pkg/driver"
@@ -15,7 +16,7 @@ var (
 
 func (d *Pan115) getAppVersion() (string, error) {
 	result := VersionResp{}
-	res, err := base.RestyClient.R().Get(driver115.ApiGetVersion)
+	res, err := base.RestyFor(d).R().Get(driver115.ApiGetVersion)
 	if err != nil {
 		return "", err
 	}

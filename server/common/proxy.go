@@ -18,6 +18,7 @@ import (
 )
 
 func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.Obj) error {
+	r = r.WithContext(net.WithHTTPClient(r.Context(), link.HTTPClient))
 	// if link.MFile != nil {
 	// 	attachHeader(w, file, link)
 	// 	http.ServeContent(w, r, file.GetName(), file.ModTime(), link.MFile)
@@ -111,6 +112,7 @@ func ProxyRange(ctx context.Context, link *model.Link, size int64) *model.Link {
 			return &model.Link{
 				RangeReader:   rrf,
 				ContentLength: size,
+				HTTPClient:    link.HTTPClient,
 			}
 		}
 	}

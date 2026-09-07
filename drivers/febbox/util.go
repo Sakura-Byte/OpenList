@@ -25,7 +25,7 @@ func (d *FebBox) refreshTokenByOAuth2() error {
 }
 
 func (d *FebBox) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
-	req := base.RestyClient.R()
+	req := base.RestyFor(d).R()
 	// 使用oauth2 获取 access_token
 	token, err := d.oauth2Token.Token()
 	if err != nil {

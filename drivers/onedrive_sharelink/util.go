@@ -2,7 +2,6 @@ package onedrive_sharelink
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,30 +12,34 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/html"
 )
 
 // NewNoRedirectClient creates an HTTP client that doesn't follow redirects
-func NewNoRedirectCLient() *http.Client {
-	return &http.Client{
-		Timeout: time.Hour * 48,
-		Transport: &http.Transport{
-			Proxy:           http.ProxyFromEnvironment,
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify},
-		},
-		// Prevent following redirects
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+func NewNoRedirectClient(d base.StorageProvider) *http.Client {
+	source := base.APIClientFor(d)
+	client := *source
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+	return &client
+}
+
+// NewNoRedirectCLient is kept for source compatibility; use NewNoRedirectClient.
+func NewNoRedirectCLient(providers ...base.StorageProvider) *http.Client {
+	if len(providers) == 0 {
+		return &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
 	}
+	return NewNoRedirectClient(providers[0])
 }
 
 // getCookiesWithPassword fetches cookies required for authenticated access using the provided password
-func getCookiesWithPassword(link, password string) (string, error) {
+func getCookiesWithPassword(client *http.Client, link, password string) (string, error) {
 	// Send GET request
-	resp, err := http.Get(link)
+	req, err := http.NewRequest(http.MethodGet, link, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -95,11 +98,9 @@ func getCookiesWithPassword(link, password string) (string, error) {
 		"__VIEWSTATEENCRYPTED": []string{""},
 	}
 
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	clientCopy := *client
+	clientCopy.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+	client = &clientCopy
 	// Send the POST request, preventing redirects
 	resp, err = client.PostForm(newURL, data)
 	if err != nil {
@@ -142,7 +143,7 @@ func (d *OnedriveSharelink) getHeaders(ctx context.Context) (http.Header, error)
 
 	if d.ShareLinkPassword == "" {
 		// Create a no-redirect client
-		clientNoDirect := NewNoRedirectCLient()
+		clientNoDirect := NewNoRedirectClient(d)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.ShareLinkURL, nil)
 		if err != nil {
 			return nil, err
@@ -169,7 +170,7 @@ func (d *OnedriveSharelink) getHeaders(ctx context.Context) (http.Header, error)
 		header.Set("authority", u.Host)
 		return header, nil
 	} else {
-		cookie, err := getCookiesWithPassword(d.ShareLinkURL, d.ShareLinkPassword)
+		cookie, err := getCookiesWithPassword(NewNoRedirectClient(d), d.ShareLinkURL, d.ShareLinkPassword)
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +183,7 @@ func (d *OnedriveSharelink) getHeaders(ctx context.Context) (http.Header, error)
 
 // getFiles retrieves the files from the OneDrive share link at the specified path
 func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, error) {
-	clientNoDirect := NewNoRedirectCLient()
+	clientNoDirect := NewNoRedirectClient(d)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.ShareLinkURL, nil)
 	if err != nil {
 		return nil, err
@@ -289,7 +290,7 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 	}
 	tempHeader["Content-Type"] = []string{"application/json;odata=verbose"}
 
-	client := &http.Client{}
+	client := NewNoRedirectClient(d)
 	postUrl := strings.Join(redirectSplitURL[:len(redirectSplitURL)-3], "/") + "/_api/v2.1/graphql"
 	req, err = http.NewRequest(http.MethodPost, postUrl, strings.NewReader(graphqlVar))
 	if err != nil {
