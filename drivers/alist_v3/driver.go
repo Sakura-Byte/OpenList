@@ -75,6 +75,7 @@ func (d *AListV3) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 	for _, f := range resp.Data.Content {
 		file := model.ObjThumb{
 			Object: model.Object{
+				Path:     path.Join(dir.GetPath(), f.Name),
 				Name:     f.Name,
 				Modified: f.Modified,
 				Ctime:    f.Created,
