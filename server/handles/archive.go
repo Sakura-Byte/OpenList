@@ -320,7 +320,7 @@ func ArchiveDown(c *gin.Context) {
 		link, _, err := fs.ArchiveDriverExtract(c.Request.Context(), archiveRawPath, model.ArchiveInnerArgs{
 			ArchiveArgs: model.ArchiveArgs{
 				LinkArgs: model.LinkArgs{
-					IP:       c.ClientIP(),
+					IP:       utils.ClientIP(c.Request),
 					Header:   c.Request.Header,
 					Type:     c.Query("type"),
 					Redirect: true,

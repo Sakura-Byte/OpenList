@@ -9,6 +9,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
@@ -75,7 +76,7 @@ func FairQueueAcquire(c *gin.Context) {
 	}
 	ip := req.IP
 	if ip == "" {
-		ip = c.ClientIP()
+		ip = utils.ClientIP(c.Request)
 	}
 	user, err := resolveFairQueueUser(req.Path, ip, req)
 	if err != nil {

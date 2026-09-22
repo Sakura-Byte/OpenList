@@ -139,7 +139,7 @@ func buildFSLinkInfo(ctx context.Context, c *gin.Context, reqPath string, args *
 	}
 
 	link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{
-		IP:       c.ClientIP(),
+		IP:       utils.ClientIP(c.Request),
 		Header:   c.Request.Header,
 		Type:     args.Type,
 		Redirect: true,

@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/OpenListTeam/OpenList/v4/server/middlewares"
 	"github.com/OpenListTeam/OpenList/v4/server/webdav"
@@ -50,7 +51,7 @@ func ServeWebDAV(c *gin.Context) {
 
 func WebDAVAuth(c *gin.Context) {
 	// check count of login
-	ip := c.ClientIP()
+	ip := utils.ClientIP(c.Request)
 	guest, _ := op.GetGuest()
 	count, cok := model.LoginCache.Get(ip)
 	if cok && count >= model.DefaultMaxAuthRetries {

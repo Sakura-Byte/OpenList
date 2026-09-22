@@ -88,8 +88,8 @@ func TestWebDAVFairQueueGuestIP429(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/dav/test.txt", nil)
-	req.Header.Set("CF-Connecting-IP", ip)
 	req = req.WithContext(context.WithValue(req.Context(), conf.UserKey, user))
+	req = req.WithContext(context.WithValue(req.Context(), conf.ClientIPKey, ip))
 	recorder := httptest.NewRecorder()
 
 	status, err := handler.handleGetHeadPost(recorder, req)

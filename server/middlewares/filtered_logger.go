@@ -8,6 +8,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
 )
@@ -60,7 +61,7 @@ func skiperDecider(c *gin.Context) bool {
 
 	for _, f := range filterList {
 		if f.CIDR != nil {
-			cip := netip.MustParseAddr(c.ClientIP())
+			cip := netip.MustParseAddr(utils.ClientIP(c.Request))
 			if !f.CIDR.Contains(cip) {
 				continue
 			}

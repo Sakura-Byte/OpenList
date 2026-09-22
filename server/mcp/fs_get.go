@@ -130,7 +130,7 @@ func buildFSGetRawURL(ctx context.Context, c *gin.Context, reqPath string, obj m
 		user, _ := ctx.Value(conf.UserKey).(*model.User)
 		ip, _ := ctx.Value(conf.ClientIPKey).(string)
 		if ip == "" {
-			ip = c.ClientIP()
+			ip = utils.ClientIP(c.Request)
 		}
 		rawURL := common.GenerateDownProxyURL(storage.GetStorage(), reqPath, user, ip)
 		if rawURL != "" {
@@ -147,7 +147,7 @@ func buildFSGetRawURL(ctx context.Context, c *gin.Context, reqPath string, obj m
 		return url, provider, nil
 	}
 	link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{
-		IP:       c.ClientIP(),
+		IP:       utils.ClientIP(c.Request),
 		Header:   c.Request.Header,
 		Redirect: true,
 	})

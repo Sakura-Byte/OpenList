@@ -159,6 +159,8 @@ type Config struct {
 	MmapThreshold         int            `json:"mmap_thresholdMB" env:"MMAP_THRESHOLD_MB"`
 	MaxConnections        int            `json:"max_connections" env:"MAX_CONNECTIONS"`
 	MaxConcurrency        int            `json:"max_concurrency" env:"MAX_CONCURRENCY"`
+	TrustedProxies        []string       `json:"trusted_proxies" env:"TRUSTED_PROXIES"`
+	TrustedProxyHeaders   []string       `json:"trusted_proxy_headers" env:"TRUSTED_PROXY_HEADERS"`
 	TlsInsecureSkipVerify bool           `json:"tls_insecure_skip_verify" env:"TLS_INSECURE_SKIP_VERIFY"`
 	UserAgent             string         `json:"user_agent" env:"USER_AGENT"`
 	UserAgentNT           string         `json:"user_agent_nt" env:"USER_AGENT_NT"`
@@ -224,6 +226,8 @@ func DefaultConfig(dataDir string) *Config {
 		MmapThreshold:         4,
 		MaxConnections:        0,
 		MaxConcurrency:        64,
+		TrustedProxies:        nil,
+		TrustedProxyHeaders:   []string{"X-Forwarded-For", "X-Real-IP"},
 		TlsInsecureSkipVerify: false,
 		UserAgent:             DefaultUserAgent,
 		UserAgentNT:           DefaultUserAgentNT,

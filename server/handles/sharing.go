@@ -34,7 +34,7 @@ func SharingGet(c *gin.Context, req *FsGetReq) {
 	if dealError(c, err) {
 		return
 	}
-	_ = countAccess(c.ClientIP(), s)
+	_ = countAccess(utils.ClientIP(c.Request), s)
 	url := ""
 	if !obj.IsDir() {
 		fakePath := fmt.Sprintf("/%s/%s", sid, path)
@@ -78,7 +78,7 @@ func SharingList(c *gin.Context, req *ListReq) {
 	if dealError(c, err) {
 		return
 	}
-	_ = countAccess(c.ClientIP(), s)
+	_ = countAccess(utils.ClientIP(c.Request), s)
 	total, objs := pagination(objs, &req.PageReq)
 	common.SuccessResp(c, FsListResp{
 		Content: utils.MustSliceConvert(objs, func(obj model.Obj) ObjResp {
@@ -131,7 +131,7 @@ func SharingArchiveMeta(c *gin.Context, req *ArchiveMetaReq) {
 	if dealError(c, err) {
 		return
 	}
-	_ = countAccess(c.ClientIP(), s)
+	_ = countAccess(utils.ClientIP(c.Request), s)
 	fakePath := fmt.Sprintf("/%s/%s", sid, path)
 	url := fmt.Sprintf("%s/sad%s", common.GetApiUrl(c), utils.EncodePath(fakePath, true))
 	if s.Pwd != "" {
@@ -177,7 +177,7 @@ func SharingArchiveList(c *gin.Context, req *ArchiveListReq) {
 	if dealError(c, err) {
 		return
 	}
-	_ = countAccess(c.ClientIP(), s)
+	_ = countAccess(utils.ClientIP(c.Request), s)
 	total, objs := pagination(objs, &req.PageReq)
 	ret, _ := utils.SliceConvert(objs, func(src model.Obj) (ObjResp, error) {
 		return toObjsRespWithoutSignAndThumb(src), nil
@@ -217,9 +217,9 @@ func SharingDown(c *gin.Context) {
 	}
 	if setting.GetBool(conf.ShareForceProxy) || common.ShouldProxy(storage, stdpath.Base(actualPath)) {
 		if _, ok := c.GetQuery("d"); !ok {
-			if url := common.GenerateDownProxyURL(storage.GetStorage(), unwrapPath, nil, c.ClientIP()); url != "" {
+			if url := common.GenerateDownProxyURL(storage.GetStorage(), unwrapPath, nil, utils.ClientIP(c.Request)); url != "" {
 				c.Redirect(302, url)
-				_ = countAccess(c.ClientIP(), s)
+				_ = countAccess(utils.ClientIP(c.Request), s)
 				return
 			}
 		}
@@ -231,11 +231,11 @@ func SharingDown(c *gin.Context) {
 			common.ErrorPage(c, errors.WithMessage(err, "failed get sharing link"), 500)
 			return
 		}
-		_ = countAccess(c.ClientIP(), s)
+		_ = countAccess(utils.ClientIP(c.Request), s)
 		proxy(c, link, obj, storage.GetStorage().ProxyRange)
 	} else {
 		link, _, err := op.Link(c.Request.Context(), storage, actualPath, model.LinkArgs{
-			IP:       c.ClientIP(),
+			IP:       utils.ClientIP(c.Request),
 			Header:   c.Request.Header,
 			Type:     c.Query("type"),
 			Redirect: true,
@@ -244,7 +244,7 @@ func SharingDown(c *gin.Context) {
 			common.ErrorPage(c, errors.WithMessage(err, "failed get sharing link"), 500)
 			return
 		}
-		_ = countAccess(c.ClientIP(), s)
+		_ = countAccess(utils.ClientIP(c.Request), s)
 		redirect(c, link)
 	}
 }

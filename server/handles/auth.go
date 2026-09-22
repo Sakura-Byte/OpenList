@@ -9,6 +9,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pquerna/otp/totp"
@@ -43,7 +44,7 @@ func LoginHash(c *gin.Context) {
 
 func loginHash(c *gin.Context, req *LoginReq) {
 	// check count of login
-	ip := c.ClientIP()
+	ip := utils.ClientIP(c.Request)
 	count, ok := model.LoginCache.Get(ip)
 	if ok && count >= model.DefaultMaxAuthRetries {
 		common.ErrorStrResp(c, model.TooManyAttempts, 429)

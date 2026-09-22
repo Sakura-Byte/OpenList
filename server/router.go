@@ -18,6 +18,7 @@ import (
 )
 
 func Init(e *gin.Engine) {
+	configureClientIP(e)
 	e.ContextWithFallback = true
 	if !utils.SliceContains([]string{"", "/"}, conf.URL.Path) {
 		e.GET("/", func(c *gin.Context) {
@@ -271,6 +272,20 @@ func Cors(r *gin.Engine) {
 }
 
 func InitS3(e *gin.Engine) {
+	configureClientIP(e)
+	e.Use(middlewares.ClientIPContext)
 	Cors(e)
 	S3Server(e.Group("/"))
+}
+
+func configureClientIP(e *gin.Engine) {
+	e.TrustedPlatform = ""
+	e.ForwardedByClientIP = true
+	e.RemoteIPHeaders = append([]string(nil), conf.Conf.TrustedProxyHeaders...)
+	if err := e.SetTrustedProxies(conf.Conf.TrustedProxies); err != nil {
+		utils.Log.Fatalf("configure trusted proxies: %v", err)
+	}
+	if err := utils.ConfigureClientIP(conf.Conf.TrustedProxies, conf.Conf.TrustedProxyHeaders); err != nil {
+		utils.Log.Fatalf("configure client IP resolver: %v", err)
+	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 )
@@ -46,7 +47,7 @@ func RateLimitReport(c *gin.Context) {
 
 	ip := req.IP
 	if ip == "" {
-		ip = c.ClientIP()
+		ip = utils.ClientIP(c.Request)
 	}
 	// Do not tie the lease to the request context, otherwise it gets released
 	// as soon as this handler returns. We want the lease to live until the

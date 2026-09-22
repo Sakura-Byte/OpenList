@@ -101,7 +101,7 @@ func SSOLoginRedirect(c *gin.Context) {
 			common.ErrorStrResp(c, err.Error(), 400)
 			return
 		}
-		state := generateState(clientId, c.ClientIP())
+		state := generateState(clientId, utils.ClientIP(c.Request))
 		c.Redirect(http.StatusFound, oauth2Config.AuthCodeURL(state))
 		return
 	default:
@@ -201,7 +201,7 @@ func OIDCLoginCallback(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	if !verifyState(clientId, c.ClientIP(), c.Query("state")) {
+	if !verifyState(clientId, utils.ClientIP(c.Request), c.Query("state")) {
 		common.ErrorStrResp(c, "incorrect or expired state parameter", 400)
 		return
 	}

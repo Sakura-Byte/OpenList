@@ -33,7 +33,7 @@ func Down(c *gin.Context) {
 		return
 	} else {
 		link, obj, err := fs.Link(c.Request.Context(), rawPath, model.LinkArgs{
-			IP:       c.ClientIP(),
+			IP:       utils.ClientIP(c.Request),
 			Header:   c.Request.Header,
 			Type:     c.Query("type"),
 			Redirect: true,
@@ -48,7 +48,7 @@ func Down(c *gin.Context) {
 			if user != nil {
 				username = user.Username
 			}
-			updatesite.NotifyContentAccess(rawPath, obj, updatesite.AccessKindConsume, updatesite.ActorKey(username, c.ClientIP()), c.GetString("X-Request-Id"))
+			updatesite.NotifyContentAccess(rawPath, obj, updatesite.AccessKindConsume, updatesite.ActorKey(username, utils.ClientIP(c.Request)), c.GetString("X-Request-Id"))
 		}
 		redirect(c, link)
 	}
