@@ -2,6 +2,7 @@ package op
 
 import (
 	stdpath "path"
+	"sync"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/db"
@@ -16,7 +17,21 @@ import (
 
 var metaCache = cache.NewMemCache(cache.WithShards[*model.Meta](2))
 
-// metaG maybe not needed
+// Coordinate invalidation with cache fills from reads that started before a save.
+var metaCacheMu sync.Mutex
+var metaCacheGeneration uint64
+
+func invalidateMetaCache(paths ...string) {
+	metaCacheMu.Lock()
+	defer metaCacheMu.Unlock()
+	metaCacheGeneration++
+	metaCache.Del(paths...)
+	for _, path := range paths {
+		metaG.Forget(path)
+	}
+}
+
+// Coalesce concurrent reads; invalidation forgets calls started before a save.
 var metaG singleflight.Group[*model.Meta]
 
 func GetNearestMeta(path string) (*model.Meta, error) {
@@ -48,15 +63,24 @@ func getMetaByPath(path string) (*model.Meta, error) {
 		return meta, nil
 	}
 	meta, err, _ := metaG.Do(path, func() (*model.Meta, error) {
+		metaCacheMu.Lock()
+		generation := metaCacheGeneration
+		metaCacheMu.Unlock()
 		_meta, err := db.GetMetaByPath(path)
+		metaCacheMu.Lock()
+		defer metaCacheMu.Unlock()
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				metaCache.Set(path, nil)
+				if generation == metaCacheGeneration {
+					metaCache.Set(path, nil)
+				}
 				return nil, errs.MetaNotFound
 			}
 			return nil, err
 		}
-		metaCache.Set(path, _meta, cache.WithEx[*model.Meta](time.Hour))
+		if generation == metaCacheGeneration {
+			metaCache.Set(path, _meta, cache.WithEx[*model.Meta](time.Hour))
+		}
 		return _meta, nil
 	})
 	return meta, err
@@ -67,8 +91,11 @@ func DeleteMetaById(id uint) error {
 	if err != nil {
 		return err
 	}
-	metaCache.Del(old.Path)
-	return db.DeleteMetaById(id)
+	if err := db.DeleteMetaById(id); err != nil {
+		return err
+	}
+	invalidateMetaCache(old.Path)
+	return nil
 }
 
 func UpdateMeta(u *model.Meta) error {
@@ -77,15 +104,32 @@ func UpdateMeta(u *model.Meta) error {
 	if err != nil {
 		return err
 	}
-	metaCache.Del(old.Path)
-	metaCache.Del(u.Path)
-	return db.UpdateMeta(u)
+	if err := db.UpdateMeta(u); err != nil {
+		return err
+	}
+	invalidateMetaCache(old.Path, u.Path)
+	return nil
 }
 
 func CreateMeta(u *model.Meta) error {
 	u.Path = utils.FixAndCleanPath(u.Path)
-	metaCache.Del(u.Path)
-	return db.CreateMeta(u)
+	if err := db.CreateMeta(u); err != nil {
+		return err
+	}
+	invalidateMetaCache(u.Path)
+	return nil
+}
+
+func UpdateMetasGrid(metas []model.MetaGridUpdate) error {
+	for i := range metas {
+		metas[i].Path = utils.FixAndCleanPath(metas[i].Path)
+	}
+	paths, err := db.UpdateMetasGrid(metas)
+	if err != nil {
+		return err
+	}
+	invalidateMetaCache(paths...)
+	return nil
 }
 
 func GetMetaById(id uint) (*model.Meta, error) {

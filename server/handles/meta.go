@@ -7,6 +7,7 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/dlclark/regexp2"
 	"github.com/gin-gonic/gin"
@@ -77,6 +78,35 @@ func validHide(hide string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+func UpdateMetasGrid(c *gin.Context) {
+	var req struct {
+		Metas []model.MetaGridUpdate `json:"metas" binding:"required,min=1,dive"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	ids := make(map[uint]bool, len(req.Metas))
+	paths := make(map[string]bool, len(req.Metas))
+	for _, meta := range req.Metas {
+		path := utils.FixAndCleanPath(meta.Path)
+		if ids[meta.ID] || paths[path] {
+			common.ErrorStrResp(c, "duplicate metadata id or path", 400)
+			return
+		}
+		ids[meta.ID], paths[path] = true, true
+		if r, err := validHide(meta.Hide); err != nil {
+			common.ErrorStrResp(c, fmt.Sprintf("%s is illegal: %s", r, err.Error()), 400)
+			return
+		}
+	}
+	if err := op.UpdateMetasGrid(req.Metas); err != nil {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	common.SuccessResp(c)
 }
 
 func DeleteMeta(c *gin.Context) {

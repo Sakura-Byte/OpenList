@@ -131,6 +131,7 @@ func admin(g *gin.RouterGroup) {
 	meta.GET("/get", handles.GetMeta)
 	meta.POST("/create", handles.CreateMeta)
 	meta.POST("/update", handles.UpdateMeta)
+	meta.POST("/update_grid", handles.UpdateMetasGrid)
 	meta.POST("/delete", handles.DeleteMeta)
 
 	user := g.Group("/user")
