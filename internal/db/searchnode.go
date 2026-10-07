@@ -16,8 +16,9 @@ func whereInParent(parent string) *gorm.DB {
 	if parent == "/" {
 		return db.Where("1 = 1")
 	}
-	return db.Where(fmt.Sprintf("%s LIKE ?", columnName("parent")),
-		fmt.Sprintf("%s/%%", parent)).
+	escaped := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(parent)
+	return db.Where(fmt.Sprintf("%s LIKE ? ESCAPE '!'", columnName("parent")),
+		fmt.Sprintf("%s/%%", escaped)).
 		Or(fmt.Sprintf("%s = ?", columnName("parent")), parent)
 }
 
@@ -36,6 +37,7 @@ func DeleteSearchNodesByParent(path string) error {
 		return err
 	}
 	dir, name := stdpath.Split(path)
+	dir = utils.FixAndCleanPath(dir)
 	return db.Where(fmt.Sprintf("%s = ? AND %s = ?",
 		columnName("parent"), columnName("name")),
 		dir, name).Delete(&model.SearchNode{}).Error

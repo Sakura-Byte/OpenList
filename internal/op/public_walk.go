@@ -2,6 +2,7 @@ package op
 
 import (
 	"context"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	stdpath "path"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
@@ -19,6 +20,7 @@ func WalkPublicRecursive(ctx context.Context, rawPath string, maxDepth int, useL
 }
 
 func WalkPublicRecursiveWithStats(ctx context.Context, rawPath string, maxDepth int, useListR bool, limiter *rate.Limiter, onBatch WalkStorageBatchFunc) (WalkStorageStats, error) {
+	ctx = driver.WithCachedTraversal(ctx)
 	stats := WalkStorageStats{}
 	rawPath = utils.FixAndCleanPath(rawPath)
 	if maxDepth == 0 {

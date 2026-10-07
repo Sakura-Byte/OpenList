@@ -103,6 +103,11 @@ func GetEtag(file model.Obj, size int64) string {
 }
 
 func ProxyRange(ctx context.Context, link *model.Link, size int64) *model.Link {
+	// URL-only objects such as virtual covers may have an unknown length.
+	// Preserve transparent upstream Range/HEAD handling until it is known.
+	if size <= 0 && link.ContentLength <= 0 {
+		return link
+	}
 	if link.RangeReader == nil && !strings.HasPrefix(link.URL, GetApiUrl(ctx)+"/") {
 		if link.ContentLength > 0 {
 			size = link.ContentLength

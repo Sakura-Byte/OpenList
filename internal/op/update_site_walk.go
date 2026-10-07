@@ -12,6 +12,7 @@ import (
 )
 
 func WalkUpdateSitePublicChunks(ctx context.Context, rawPath string, maxDepth int, args model.ListArgs, onChunk driver.UpdateSiteChunkCallback) error {
+	ctx = driver.WithCachedTraversal(ctx)
 	rawPath = utils.FixAndCleanPath(rawPath)
 	if maxDepth == 0 {
 		return nil
@@ -95,6 +96,7 @@ func walkUpdateSiteChildDirs(ctx context.Context, parent string, entries []model
 }
 
 func WalkUpdateSiteStorageChunks(ctx context.Context, storage driver.Driver, actualPath string, maxDepth int, args model.ListArgs, onChunk driver.UpdateSiteChunkCallback) error {
+	ctx = driver.WithCachedTraversal(ctx)
 	actualPath = utils.FixAndCleanPath(actualPath)
 	if maxDepth == 0 {
 		return nil

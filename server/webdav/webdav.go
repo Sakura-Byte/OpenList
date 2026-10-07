@@ -259,9 +259,14 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}
-		defer link.Close()
-		http.Redirect(w, r, link.URL, http.StatusFound)
-		return 0, nil
+		if link.URL != "" {
+			defer link.Close()
+			http.Redirect(w, r, link.URL, http.StatusFound)
+			return 0, nil
+		}
+		// A virtual local file has no redirect target. Continue through the
+		// native serving path, including the existing queue and Range handling.
+		link.Close()
 	}
 
 	if storage.GetStorage().WebdavProxyURL() {

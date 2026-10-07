@@ -32,6 +32,13 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		return nil, errors.WithMessagef(errs.StorageNotInit, "storage status: %s", storage.GetStorage().Status)
 	}
 	path = utils.FixAndCleanPath(path)
+	if cached, ok := storage.(driver.CachedTree); ok && driver.IsCachedTraversal(ctx) {
+		dir, err := GetUnwrap(ctx, storage, path)
+		if err != nil {
+			return nil, err
+		}
+		return cached.ListCached(ctx, dir, args)
+	}
 	log.Debugf("op.List %s", path)
 	key := Key(storage, path)
 	if !args.Refresh {

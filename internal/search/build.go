@@ -32,6 +32,7 @@ func Running() bool {
 }
 
 func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth int, count bool) error {
+	ctx = driver.WithCachedTraversal(ctx)
 	var (
 		err      error
 		objCount uint64 = 0
@@ -45,6 +46,15 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 		// other goroutine is running
 		return errs.BuildIndexIsRunning
 	}
+	for !cachedTreeIndexMu.TryLock() {
+		select {
+		case <-ctx.Done():
+			Quit.CompareAndSwap(&quit, nil)
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	defer cachedTreeIndexMu.Unlock()
 	var (
 		indexMQ = mq.NewInMemoryMQ[ObjWithParent]()
 		running = atomic.Bool{} // current goroutine running
@@ -143,7 +153,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 	if err != nil {
 		return err
 	}
-	walkCtx := context.WithValue(ctx, conf.UserKey, admin)
+	walkCtx := driver.WithCachedTraversal(context.WithValue(ctx, conf.UserKey, admin))
 	if count {
 		WriteProgress(&model.IndexProgress{
 			ObjCount: 0,
@@ -269,6 +279,13 @@ func Config(ctx context.Context) searcher.Config {
 }
 
 func Update(ctx context.Context, parent string, objs []model.Obj) {
+	// These drivers publish durable snapshot jobs. Browsing must not race a
+	// subtree replacement or enqueue obsolete snapshots in async backends.
+	if storage, _, err := op.GetStorageAndActualPath(parent); err == nil {
+		if _, ok := storage.(driver.CachedTree); ok {
+			return
+		}
+	}
 	if instance == nil || !instance.Config().AutoUpdate || !setting.GetBool(conf.AutoUpdateIndex) || Running() {
 		return
 	}

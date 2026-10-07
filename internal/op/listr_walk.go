@@ -34,6 +34,7 @@ func WalkStorageRecursive(ctx context.Context, storage driver.Driver, actualPath
 
 func WalkStorageRecursiveWithStats(ctx context.Context, storage driver.Driver, actualPath string, maxDepth int,
 	args model.ListArgs, useListR bool, limiter *rate.Limiter, onBatch WalkStorageBatchFunc) (WalkStorageStats, error) {
+	ctx = driver.WithCachedTraversal(ctx)
 	stats := WalkStorageStats{}
 	actualPath = utils.FixAndCleanPath(actualPath)
 	if maxDepth == 0 {

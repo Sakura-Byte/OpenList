@@ -50,7 +50,7 @@ func Down(c *gin.Context) {
 			}
 			updatesite.NotifyContentAccess(rawPath, obj, updatesite.AccessKindConsume, updatesite.ActorKey(username, utils.ClientIP(c.Request)), c.GetString("X-Request-Id"))
 		}
-		redirect(c, link)
+		redirect(c, link, obj)
 	}
 }
 
@@ -93,7 +93,15 @@ func Proxy(c *gin.Context) {
 	}
 }
 
-func redirect(c *gin.Context, link *model.Link) {
+func redirect(c *gin.Context, link *model.Link, files ...model.Obj) {
+	if link.URL == "" && link.RangeReader != nil {
+		var file model.Obj = &model.Object{Name: stdpath.Base(c.Request.URL.Path), Size: link.ContentLength}
+		if len(files) > 0 {
+			file = files[0]
+		}
+		proxy(c, link, file, false)
+		return
+	}
 	defer link.Close()
 	var err error
 	c.Header("Referrer-Policy", "no-referrer")

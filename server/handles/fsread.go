@@ -367,6 +367,13 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 				}
 				defer link.Close()
 				rawURL = link.URL
+				if rawURL == "" && link.RangeReader != nil {
+					query := ""
+					if isEncrypt(meta, reqPath) || setting.GetBool(conf.SignAll) {
+						query = "?sign=" + sign.SignDownload(user, reqPath, ip)
+					}
+					rawURL = fmt.Sprintf("%s/d%s%s", common.GetApiUrl(c), utils.EncodePath(reqPath, true), query)
+				}
 			}
 		}
 	}
