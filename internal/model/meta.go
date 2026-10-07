@@ -18,3 +18,20 @@ type Meta struct {
 	Header        string `json:"header"`
 	HeaderSub     bool   `json:"header_sub"`
 }
+
+// MetaGridUpdate contains only fields editable in the metadata grid.
+// User access lists are managed separately by the single-record editor.
+type MetaGridUpdate struct {
+	ID        uint   `json:"id" binding:"required"`
+	Path      string `json:"path" binding:"required"`
+	Password  string `json:"password"`
+	PSub      bool   `json:"p_sub"`
+	Write     bool   `json:"write"`
+	WSub      bool   `json:"w_sub"`
+	Hide      string `json:"hide"`
+	HSub      bool   `json:"h_sub"`
+	Readme    string `json:"readme"`
+	RSub      bool   `json:"r_sub"`
+	Header    string `json:"header"`
+	HeaderSub bool   `json:"header_sub"`
+}

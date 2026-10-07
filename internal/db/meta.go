@@ -3,6 +3,7 @@ package db
 import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/pkg/errors"
+	"gorm.io/gorm"
 )
 
 func GetMetaByPath(path string) (*model.Meta, error) {
@@ -27,6 +28,32 @@ func CreateMeta(u *model.Meta) error {
 
 func UpdateMeta(u *model.Meta) error {
 	return errors.WithStack(db.Save(u).Error)
+}
+
+// UpdateMetasGrid updates existing records atomically and returns both old and
+// new paths for cache invalidation after the transaction commits.
+func UpdateMetasGrid(metas []model.MetaGridUpdate) ([]string, error) {
+	paths := make([]string, 0, len(metas)*2)
+	err := db.Transaction(func(tx *gorm.DB) error {
+		for _, meta := range metas {
+			var old model.Meta
+			if err := tx.First(&old, meta.ID).Error; err != nil {
+				return errors.Wrapf(err, "failed get meta %d", meta.ID)
+			}
+			paths = append(paths, old.Path, meta.Path)
+			values := map[string]interface{}{
+				"path": meta.Path, "password": meta.Password, "p_sub": meta.PSub,
+				"write": meta.Write, "w_sub": meta.WSub, "hide": meta.Hide,
+				"h_sub": meta.HSub, "readme": meta.Readme, "r_sub": meta.RSub,
+				"header": meta.Header, "header_sub": meta.HeaderSub,
+			}
+			if err := tx.Model(&old).Updates(values).Error; err != nil {
+				return errors.Wrapf(err, "failed update meta %d", meta.ID)
+			}
+		}
+		return nil
+	})
+	return paths, errors.WithStack(err)
 }
 
 func GetMetas(pageIndex, pageSize int) (metas []model.Meta, count int64, err error) {
