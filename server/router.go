@@ -5,6 +5,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/message"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	multipartPkg "github.com/OpenListTeam/OpenList/v4/internal/multipart"
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
@@ -111,6 +112,8 @@ func Init(e *gin.Engine) {
 	public.Any("/settings", handles.PublicSettings)
 	public.Any("/offline_download_tools", handles.OfflineDownloadTools)
 	public.Any("/archive_extensions", handles.ArchiveExtensions)
+	public.Any("/init_status", handles.InitStatus)
+	public.POST("/init/setup", handles.InitSetup)
 
 	_fs(auth.Group("/fs"))
 	fsAndShare(api.Group("/fs", middlewares.Auth(true)))
@@ -190,6 +193,7 @@ func admin(g *gin.RouterGroup) {
 	fairqueue.POST("/abandon", handles.FairQueueAbandon)
 	fairqueue.POST("/activate", handles.FairQueueActivate)
 	fairqueue.POST("/release", handles.FairQueueRelease)
+	setting.POST("/set_guangyapan", handles.SetGuangYaPan)
 
 	// retain /admin/task API to ensure compatibility with legacy automation scripts
 	_task(g.Group("/task"))
@@ -238,6 +242,13 @@ func _fs(g *gin.RouterGroup) {
 	uploadLimiter := middlewares.UploadRateLimiter(stream.ClientUploadLimit)
 	g.PUT("/put", middlewares.FsUp, uploadLimiter, handles.FsStream)
 	g.PUT("/form", middlewares.FsUp, uploadLimiter, handles.FsForm)
+	multipartPkg.DefaultManager.StartGC() // reclaim ring files orphaned by a previous run
+	multipart := g.Group("/multipart")
+	multipart.POST("/init", middlewares.FsUp, handles.MultipartInit)
+	multipart.PUT("/chunk", uploadLimiter, handles.MultipartChunk)
+	multipart.POST("/complete", handles.MultipartComplete)
+	multipart.GET("/status", handles.MultipartStatus)
+	multipart.POST("/abort", handles.MultipartAbort)
 	g.POST("/link", middlewares.AuthAdmin, handles.Link)
 	// g.POST("/add_aria2", handles.AddOfflineDownload)
 	// g.POST("/add_qbit", handles.AddQbittorrent)
@@ -250,7 +261,7 @@ func _fs(g *gin.RouterGroup) {
 	g.POST("/torrent/rapid_upload", handles.TorrentRapidUpload)
 	g.POST("/torrent/generate", handles.GenerateTorrentForPath)
 	// Direct upload (client-side upload to storage)
-	g.POST("/get_direct_upload_info", middlewares.FsUp, handles.FsGetDirectUploadInfo)
+	g.POST("/get_direct_upload_info", handles.FsGetDirectUploadInfo)
 }
 
 func _task(g *gin.RouterGroup) {

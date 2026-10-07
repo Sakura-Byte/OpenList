@@ -33,7 +33,7 @@ type Link struct {
 	RangeReader RangeReaderIF `json:"-"`      // recommended way if can't use URL
 	HTTPClient  *http.Client  `json:"-"`      // storage-bound file transport, including cached links
 
-	Expiration *time.Duration // local cache expire Duration
+	Expiration *time.Duration // local cache expiration; not transferred by Clone
 
 	//for accelerating request, use multi-thread downloading
 	Concurrency   int   `json:"concurrency"`
@@ -45,13 +45,13 @@ type Link struct {
 	RequireReference bool `json:"-"`
 }
 
+// Clone transfers ownership of l without inheriting its cache expiration.
 func (l *Link) Clone() *Link {
 	return &Link{
 		URL:              l.URL,
 		Header:           l.Header,
 		RangeReader:      l.RangeReader,
 		HTTPClient:       l.HTTPClient,
-		Expiration:       l.Expiration,
 		Concurrency:      l.Concurrency,
 		PartSize:         l.PartSize,
 		ContentLength:    l.ContentLength,
@@ -121,22 +121,4 @@ type SharingLinkArgs struct {
 
 type RangeReaderIF interface {
 	RangeRead(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error)
-}
-
-type RangeReadCloserIF interface {
-	RangeReaderIF
-	utils.ClosersIF
-}
-
-var _ RangeReadCloserIF = (*RangeReadCloser)(nil)
-
-type RangeReadCloser struct {
-	RangeReader RangeReaderIF
-	utils.Closers
-}
-
-func (r *RangeReadCloser) RangeRead(ctx context.Context, httpRange http_range.Range) (io.ReadCloser, error) {
-	rc, err := r.RangeReader.RangeRead(ctx, httpRange)
-	r.Add(rc)
-	return rc, err
 }

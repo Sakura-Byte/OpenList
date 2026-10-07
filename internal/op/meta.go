@@ -2,6 +2,7 @@ package op
 
 import (
 	stdpath "path"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,12 +17,19 @@ import (
 )
 
 var metaCache = cache.NewMemCache(cache.WithShards[*model.Meta](2))
+var metaSnapshotMu sync.Mutex
+var metaSnapshot []model.Meta
+var metaSnapshotLoaded bool
 
 // Coordinate invalidation with cache fills from reads that started before a save.
 var metaCacheMu sync.Mutex
 var metaCacheGeneration uint64
 
 func invalidateMetaCache(paths ...string) {
+	metaSnapshotMu.Lock()
+	metaSnapshot = nil
+	metaSnapshotLoaded = false
+	metaSnapshotMu.Unlock()
 	metaCacheMu.Lock()
 	defer metaCacheMu.Unlock()
 	metaCacheGeneration++
@@ -38,17 +46,56 @@ func GetNearestMeta(path string) (*model.Meta, error) {
 	return getNearestMeta(utils.FixAndCleanPath(path))
 }
 func getNearestMeta(path string) (*model.Meta, error) {
-	meta, err := GetMetaByPath(path)
-	if err == nil {
-		return meta, nil
+	var metas []model.Meta
+	loaded := false
+	for {
+		meta, err := GetMetaByPath(path)
+		if err == nil {
+			return meta, nil
+		}
+		if errors.Cause(err) != errs.MetaNotFound {
+			return nil, err
+		}
+		if !loaded {
+			metas, err = getMetaSnapshot()
+			if err != nil {
+				return nil, err
+			}
+			loaded = true
+		}
+		var matched *model.Meta
+		for i := range metas {
+			if !strings.EqualFold(utils.FixAndCleanPath(metas[i].Path), path) {
+				continue
+			}
+			if matched != nil {
+				return nil, errors.Errorf("multiple metas match %q case-insensitively", path)
+			}
+			matched = &metas[i]
+		}
+		if matched != nil {
+			return matched, nil
+		}
+		if path == "/" {
+			return nil, errs.MetaNotFound
+		}
+		path = stdpath.Dir(path)
 	}
-	if errors.Cause(err) != errs.MetaNotFound {
+}
+
+func getMetaSnapshot() ([]model.Meta, error) {
+	metaSnapshotMu.Lock()
+	defer metaSnapshotMu.Unlock()
+	if metaSnapshotLoaded {
+		return metaSnapshot, nil
+	}
+	metas, err := db.GetAllMetas()
+	if err != nil {
 		return nil, err
 	}
-	if path == "/" {
-		return nil, errs.MetaNotFound
-	}
-	return getNearestMeta(stdpath.Dir(path))
+	metaSnapshot = metas
+	metaSnapshotLoaded = true
+	return metaSnapshot, nil
 }
 
 func GetMetaByPath(path string) (*model.Meta, error) {

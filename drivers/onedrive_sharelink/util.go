@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
+	internalNet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/html"
 )
@@ -27,15 +28,17 @@ func NewNoRedirectClient(d base.StorageProvider) *http.Client {
 // NewNoRedirectCLient is kept for source compatibility; use NewNoRedirectClient.
 func NewNoRedirectCLient(providers ...base.StorageProvider) *http.Client {
 	if len(providers) == 0 {
-		return &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+		client := internalNet.NewHttpClient()
+		client.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+		return client
 	}
 	return NewNoRedirectClient(providers[0])
 }
 
 // getCookiesWithPassword fetches cookies required for authenticated access using the provided password
-func getCookiesWithPassword(client *http.Client, link, password string) (string, error) {
+func getCookiesWithPassword(ctx context.Context, client *http.Client, link, password string) (string, error) {
 	// Send GET request
-	req, err := http.NewRequest(http.MethodGet, link, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if err != nil {
 		return "", err
 	}
@@ -102,10 +105,16 @@ func getCookiesWithPassword(client *http.Client, link, password string) (string,
 	clientCopy.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
 	client = &clientCopy
 	// Send the POST request, preventing redirects
-	resp, err = client.PostForm(newURL, data)
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, newURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err = client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
 
 	// Extract the desired cookie value
 	cookie := resp.Cookies()
@@ -154,6 +163,7 @@ func (d *OnedriveSharelink) getHeaders(ctx context.Context) (http.Header, error)
 		if err != nil {
 			return nil, err
 		}
+		defer answerNoRedirect.Body.Close()
 		redirectUrl := answerNoRedirect.Header.Get("Location")
 		log.Debugln("redirectUrl:", redirectUrl)
 		if redirectUrl == "" {
@@ -170,7 +180,7 @@ func (d *OnedriveSharelink) getHeaders(ctx context.Context) (http.Header, error)
 		header.Set("authority", u.Host)
 		return header, nil
 	} else {
-		cookie, err := getCookiesWithPassword(NewNoRedirectClient(d), d.ShareLinkURL, d.ShareLinkPassword)
+		cookie, err := getCookiesWithPassword(ctx, NewNoRedirectClient(d), d.ShareLinkURL, d.ShareLinkPassword)
 		if err != nil {
 			return nil, err
 		}
@@ -198,6 +208,7 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 		if err != nil {
 			return nil, err
 		}
+		_ = answerNoRedirect.Body.Close()
 		redirectUrl = answerNoRedirect.Header.Get("Location")
 	} else {
 		header = d.Headers
@@ -206,6 +217,7 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 		if err != nil {
 			return nil, err
 		}
+		_ = answerNoRedirect.Body.Close()
 		redirectUrl = answerNoRedirect.Header.Get("Location")
 	}
 	redirectSplitURL := strings.Split(redirectUrl, "/")
@@ -292,7 +304,7 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 
 	client := NewNoRedirectClient(d)
 	postUrl := strings.Join(redirectSplitURL[:len(redirectSplitURL)-3], "/") + "/_api/v2.1/graphql"
-	req, err = http.NewRequest(http.MethodPost, postUrl, strings.NewReader(graphqlVar))
+	req, err = http.NewRequestWithContext(ctx, http.MethodPost, postUrl, strings.NewReader(graphqlVar))
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +339,10 @@ func (d *OnedriveSharelink) getFiles(ctx context.Context, path string) ([]Item, 
 			log.Debugln("nextHref:", nextHref)
 			graphqlReqNEW := GraphQLNEWRequest{}
 			postUrl = strings.Join(redirectSplitURL[:len(redirectSplitURL)-3], "/") + "/_api/web/GetListUsingPath(DecodedUrl=@a1)/RenderListDataAsStream" + nextHref
-			req, _ = http.NewRequest(http.MethodPost, postUrl, strings.NewReader(renderListDataAsStreamVar))
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, postUrl, strings.NewReader(renderListDataAsStreamVar))
+			if err != nil {
+				return nil, err
+			}
 			req.Header = tempHeader
 
 			resp, err := client.Do(req)

@@ -392,8 +392,9 @@ func ArchiveGet(ctx context.Context, storage driver.Driver, path string, args mo
 }
 
 type objWithLink struct {
-	link *model.Link
-	obj  model.Obj
+	link   *model.Link
+	obj    model.Obj
+	policy linkCachePolicy
 }
 
 var (
@@ -407,10 +408,7 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 	}
 	key := stdpath.Join(Key(storage, path), args.InnerPath)
 	if ol, ok := extractCache.Get(key); ok {
-		if ol.link.HTTPClient == nil {
-			ol.link.HTTPClient = base.TransferClientFor(storage)
-		}
-		if ol.link.Expiration != nil || ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
+		if ol.acquire() {
 			return ol.link, ol.obj, nil
 		}
 	}
@@ -420,8 +418,8 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed extract archive")
 		}
-		if ol.link.Expiration != nil {
-			extractCache.SetWithTTL(key, ol, *ol.link.Expiration)
+		if ol.policy.expiration != nil {
+			extractCache.SetWithTTL(key, ol, *ol.policy.expiration)
 		} else {
 			extractCache.SetWithExpirable(key, ol, &ol.link.SyncClosers)
 		}
@@ -433,10 +431,7 @@ func DriverExtract(ctx context.Context, storage driver.Driver, path string, args
 		if err != nil {
 			return nil, nil, err
 		}
-		if ol.link.SyncClosers.AcquireReference() || !ol.link.RequireReference {
-			if ol.link.HTTPClient == nil {
-				ol.link.HTTPClient = base.TransferClientFor(storage)
-			}
+		if ol.acquire() {
 			return ol.link, ol.obj, nil
 		}
 	}
@@ -458,10 +453,13 @@ func driverExtract(ctx context.Context, storage driver.Driver, path string, args
 		return nil, errors.WithStack(errs.NotFile)
 	}
 	link, err := storageAr.Extract(ctx, archiveFile, args)
-	if err == nil && link != nil && link.HTTPClient == nil {
+	if err != nil {
+		return nil, err
+	}
+	if link != nil && link.HTTPClient == nil {
 		link.HTTPClient = base.TransferClientFor(storage)
 	}
-	return &objWithLink{link: link, obj: extracted}, err
+	return admitLink(link, extracted)
 }
 
 type streamWithParent struct {

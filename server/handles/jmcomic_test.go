@@ -40,10 +40,18 @@ func TestReaderManifestBasePathsPasswordsAndHiddenChapters(t *testing.T) {
 	op.RegisterDriver(func() driver.Driver { return &readerFixture{} })
 	database, e := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s-%d?mode=memory&cache=shared", t.Name(), time.Now().UnixNano())), &gorm.Config{})
 	require.NoError(t, e)
+	previousDB := db.GetDb()
 	db.Init(database)
 	id, e := op.CreateStorage(context.Background(), model.Storage{Driver: "JMReaderFixture", MountPath: "/fixture", Addition: `{"root_folder_path":"/"}`})
 	require.NoError(t, e)
-	t.Cleanup(func() { _ = op.DeleteStorageById(context.Background(), id); c, _ := database.DB(); c.Close() })
+	t.Cleanup(func() {
+		_ = op.DeleteStorageById(context.Background(), id)
+		if previousDB != nil {
+			db.Init(previousDB)
+		}
+		c, _ := database.DB()
+		_ = c.Close()
+	})
 	require.NoError(t, db.CreateMeta(&model.Meta{Path: "/fixture/work", Password: "secret", PSub: true, Hide: "^hidden$", HSub: true}))
 	require.NoError(t, db.CreateMeta(&model.Meta{Path: "/fixture/标签", Hide: "^Hidden$", HSub: true}))
 	user := &model.User{ID: 12, Role: model.GENERAL, BasePath: "/fixture"}

@@ -56,23 +56,7 @@ func Search(c *gin.Context) {
 		return
 	}
 	nodes, total, err := search.SearchFiltered(c, req.SearchReq, func(node model.SearchNode) bool {
-		if !utils.IsSubPath(user.BasePath, node.Parent) {
-			return false
-		}
-		if node.AccessPath != "" {
-			aliasMeta, err := op.GetNearestMeta(path.Dir(node.AccessPath))
-			if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-				return false
-			}
-			if !utils.IsSubPath(user.BasePath, node.AccessPath) || !common.CanAccess(user, aliasMeta, node.AccessPath, req.Password) {
-				return false
-			}
-		}
-		meta, err := op.GetNearestMeta(node.Parent)
-		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			return false
-		}
-		return common.CanAccess(user, meta, path.Join(node.Parent, node.Name), req.Password)
+		return isSearchNodeAccessible(user, node, req.Password, op.GetNearestMeta)
 	})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
@@ -82,6 +66,28 @@ func Search(c *gin.Context) {
 		Content: utils.MustSliceConvert(nodes, nodeToSearchResp),
 		Total:   total,
 	})
+}
+
+func isSearchNodeAccessible(user *model.User, node model.SearchNode, password string, resolveMeta func(string) (*model.Meta, error)) bool {
+	if !utils.IsSubPath(user.BasePath, node.Parent) {
+		return false
+	}
+	if node.AccessPath != "" {
+		aliasNode := model.SearchNode{Parent: path.Dir(node.AccessPath), Name: path.Base(node.AccessPath), IsDir: node.IsDir}
+		if !isSearchNodeAccessible(user, aliasNode, password, resolveMeta) {
+			return false
+		}
+	}
+	nodePath := path.Join(node.Parent, node.Name)
+	metaPath := node.Parent
+	if node.IsDir {
+		metaPath = nodePath
+	}
+	meta, err := resolveMeta(metaPath)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		return false
+	}
+	return common.CanAccess(user, meta, nodePath, password)
 }
 
 func nodeToSearchResp(node model.SearchNode) SearchResp {
