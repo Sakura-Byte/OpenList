@@ -21,6 +21,9 @@ type cachedTreeReplacer interface {
 }
 
 func updateCachedTree(ctx context.Context, storage driver.Driver, oldPath, newPath string) (bool, error) {
+	if _, direct := storage.(driver.CachedSearcher); direct {
+		return true, nil
+	}
 	if !cachedTreeIndexMu.TryLock() {
 		return false, nil
 	}

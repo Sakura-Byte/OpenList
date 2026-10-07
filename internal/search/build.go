@@ -172,6 +172,9 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 				}
 			}
 			if storage, _, err := op.GetStorageAndActualPath(indexPath); err == nil {
+				if _, direct := storage.(driver.CachedSearcher); direct {
+					return filepath.SkipDir
+				}
 				if storage.GetStorage().DisableIndex {
 					return filepath.SkipDir
 				}
@@ -279,8 +282,8 @@ func Config(ctx context.Context) searcher.Config {
 }
 
 func Update(ctx context.Context, parent string, objs []model.Obj) {
-	// These drivers publish durable snapshot jobs. Browsing must not race a
-	// subtree replacement or enqueue obsolete snapshots in async backends.
+	// Cache-native searches need no index writes. Other cached-tree drivers
+	// publish their snapshots through the dedicated update hook.
 	if storage, _, err := op.GetStorageAndActualPath(parent); err == nil {
 		if _, ok := storage.(driver.CachedTree); ok {
 			return

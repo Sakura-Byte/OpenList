@@ -1,19 +1,7 @@
 package middlewares
 
-import (
-	"github.com/OpenListTeam/OpenList/v4/internal/conf"
-	"github.com/OpenListTeam/OpenList/v4/internal/errs"
-	"github.com/OpenListTeam/OpenList/v4/internal/setting"
-	"github.com/OpenListTeam/OpenList/v4/server/common"
-	"github.com/gin-gonic/gin"
-)
+import "github.com/gin-gonic/gin"
 
-func SearchIndex(c *gin.Context) {
-	mode := setting.GetStr(conf.SearchIndex)
-	if mode == "none" {
-		common.ErrorResp(c, errs.SearchNotAvailable, 404)
-		c.Abort()
-	} else {
-		c.Next()
-	}
-}
+// Search availability depends on the requested path and local driver support,
+// not only on the configured index engine. The handler checks after binding.
+func SearchIndex(c *gin.Context) { c.Next() }

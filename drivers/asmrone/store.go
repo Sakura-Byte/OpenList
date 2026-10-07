@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -34,10 +35,12 @@ func openStore(filename string) (*cacheStore, error) {
 	s := &cacheStore{db: db, filename: filename}
 	for _, statement := range []string{
 		`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`,
-		`CREATE TABLE IF NOT EXISTS works (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, data TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, tracks TEXT NOT NULL DEFAULT '', tracks_at INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', retry_at INTEGER NOT NULL DEFAULT 0, seen TEXT NOT NULL DEFAULT '', refresh_requested INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS works (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, data TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, tracks TEXT NOT NULL DEFAULT '', tracks_at INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', retry_at INTEGER NOT NULL DEFAULT 0, seen TEXT NOT NULL DEFAULT '', refresh_requested INTEGER NOT NULL DEFAULT 0, range_name TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS index_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, old_path TEXT NOT NULL, new_path TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, UNIQUE(old_path,new_path))`,
+		`CREATE TABLE IF NOT EXISTS work_changes (work_id INTEGER PRIMARY KEY, modified_at INTEGER NOT NULL)`,
+		`DROP TABLE IF EXISTS index_jobs`,
 		`CREATE INDEX IF NOT EXISTS works_pending ON works(active,retry_at,tracks_at)`,
+		`CREATE INDEX IF NOT EXISTS works_range ON works(active,range_name)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			db.Close()
@@ -68,7 +71,7 @@ func (s *cacheStore) saveState(ctx context.Context, state syncState) error {
 func scanWork(row interface{ Scan(...any) error }) (cachedWork, error) {
 	var w cachedWork
 	var raw, tracks string
-	err := row.Scan(&w.DirectoryName, &raw, &w.Active, &tracks, &w.TracksAt, &w.Error, &w.RetryAt)
+	err := row.Scan(&w.DirectoryName, &raw, &w.Active, &tracks, &w.TracksAt, &w.Error, &w.RetryAt, &w.ModifiedAt)
 	if err != nil {
 		return w, err
 	}
@@ -82,7 +85,8 @@ func scanWork(row interface{ Scan(...any) error }) (cachedWork, error) {
 	return w, err
 }
 
-const workColumns = `name,data,active,tracks,tracks_at,error,retry_at`
+const workModifiedColumn = `COALESCE((SELECT modified_at FROM work_changes WHERE work_id=works.id),0)`
+const workColumns = `name,data,active,tracks,tracks_at,error,retry_at,` + workModifiedColumn
 
 func (s *cacheStore) byID(ctx context.Context, id int64) (cachedWork, error) {
 	return scanWork(s.db.QueryRowContext(ctx, `SELECT `+workColumns+` FROM works WHERE id=?`, id))
@@ -91,8 +95,17 @@ func (s *cacheStore) byName(ctx context.Context, name string) (cachedWork, error
 	return scanWork(s.db.QueryRowContext(ctx, `SELECT `+workColumns+` FROM works WHERE name=? AND active=1`, name))
 }
 func (s *cacheStore) works(ctx context.Context) ([]cachedWork, error) {
+	return s.worksInRange(ctx, "")
+}
+func (s *cacheStore) worksInRange(ctx context.Context, rangeName string) ([]cachedWork, error) {
 	// Root listings never deserialize every track tree.
-	rows, err := s.db.QueryContext(ctx, `SELECT name,data,active,'',tracks_at,error,retry_at FROM works WHERE active=1 ORDER BY id DESC`)
+	query := `SELECT name,data,active,'',tracks_at,error,retry_at,` + workModifiedColumn + ` FROM works WHERE active=1`
+	var args []any
+	if rangeName != "" {
+		query += ` AND range_name=?`
+		args = append(args, rangeName)
+	}
+	rows, err := s.db.QueryContext(ctx, query+` ORDER BY id DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -107,8 +120,29 @@ func (s *cacheStore) works(ctx context.Context) ([]cachedWork, error) {
 	}
 	return result, rows.Err()
 }
-func enqueueIndex(ctx context.Context, tx *sql.Tx, oldPath, newPath string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO index_jobs(old_path,new_path) VALUES(?,?) ON CONFLICT(old_path,new_path) DO UPDATE SET id=(SELECT COALESCE(MAX(id),0)+1 FROM index_jobs),revision=index_jobs.revision+1`, oldPath, newPath)
+func (s *cacheStore) ranges(ctx context.Context) ([]rangeInfo, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT range_name,MAX(MAX(`+workModifiedColumn+`,tracks_at*1000)) FROM works WHERE active=1 GROUP BY range_name ORDER BY length(range_name),range_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []rangeInfo
+	for rows.Next() {
+		var info rangeInfo
+		if err := rows.Scan(&info.Name, &info.ModifiedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, info)
+	}
+	return result, rows.Err()
+}
+func (s *cacheStore) rangeByName(ctx context.Context, name string) (rangeInfo, error) {
+	var info rangeInfo
+	err := s.db.QueryRowContext(ctx, `SELECT range_name,MAX(MAX(`+workModifiedColumn+`,tracks_at*1000)) FROM works WHERE active=1 AND range_name=? GROUP BY range_name`, name).Scan(&info.Name, &info.ModifiedAt)
+	return info, err
+}
+func saveModified(ctx context.Context, tx *sql.Tx, id, millis int64) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO work_changes(work_id,modified_at) VALUES(?,?) ON CONFLICT(work_id) DO UPDATE SET modified_at=MAX(work_changes.modified_at,excluded.modified_at)`, id, millis)
 	return err
 }
 func (s *cacheStore) upsertPage(ctx context.Context, works []work, generation string) error {
@@ -117,6 +151,7 @@ func (s *cacheStore) upsertPage(ctx context.Context, works []work, generation st
 		return err
 	}
 	defer tx.Rollback()
+	now := time.Now().UnixMilli()
 	for _, w := range works {
 		var oldName, oldData string
 		var active bool
@@ -140,16 +175,17 @@ func (s *cacheStore) upsertPage(ctx context.Context, works []work, generation st
 				name += fmt.Sprintf(" (%d)", seq+1)
 			}
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO works(id,name,data,seen) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,data=excluded.data,active=1,seen=CASE WHEN excluded.seen='' THEN works.seen ELSE excluded.seen END`, int64(w.ID), name, encode(w), generation)
+		_, err = tx.ExecContext(ctx, `INSERT INTO works(id,name,data,seen,range_name) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,data=excluded.data,range_name=excluded.range_name,active=1,seen=CASE WHEN excluded.seen='' THEN works.seen ELSE excluded.seen END`, int64(w.ID), name, encode(w), generation, w.rangeName())
 		if err != nil {
 			return err
 		}
 		if oldData != encode(w) || oldName != name || !active {
-			oldPath := ""
-			if oldName != "" {
-				oldPath = "/" + oldName
+			if err := saveModified(ctx, tx, int64(w.ID), now); err != nil {
+				return err
 			}
-			if err := enqueueIndex(ctx, tx, oldPath, "/"+name); err != nil {
+		} else {
+			// Start tracking older cache entries on their next successful save.
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO work_changes(work_id,modified_at) VALUES(?,?)`, int64(w.ID), now); err != nil {
 				return err
 			}
 		}
@@ -162,29 +198,6 @@ func (s *cacheStore) finishFull(ctx context.Context, generation string) error {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT name FROM works WHERE active=1 AND seen<>?`, generation)
-	if err != nil {
-		return err
-	}
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			rows.Close()
-			return err
-		}
-		names = append(names, name)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		if err := enqueueIndex(ctx, tx, "/"+name, ""); err != nil {
-			return err
-		}
-	}
 	if _, err := tx.ExecContext(ctx, `UPDATE works SET active=0 WHERE seen<>?`, generation); err != nil {
 		return err
 	}
@@ -199,16 +212,8 @@ func (s *cacheStore) saveTracks(ctx context.Context, w cachedWork, nodes []track
 	if _, err := tx.ExecContext(ctx, `UPDATE works SET tracks=?,tracks_at=?,error='',retry_at=0,refresh_requested=0 WHERE id=?`, encode(nodes), now, int64(w.ID)); err != nil {
 		return err
 	}
-	// Use the latest title if a catalog sync renamed this work during the fetch.
-	var name string
-	var active bool
-	if err := tx.QueryRowContext(ctx, `SELECT name,active FROM works WHERE id=?`, int64(w.ID)).Scan(&name, &active); err != nil {
+	if err := saveModified(ctx, tx, int64(w.ID), max(now*1000, time.Now().UnixMilli())); err != nil {
 		return err
-	}
-	if active {
-		if err := enqueueIndex(ctx, tx, "/"+name, "/"+name); err != nil {
-			return err
-		}
 	}
 	return tx.Commit()
 }
@@ -222,11 +227,6 @@ func (s *cacheStore) nextWork(ctx context.Context, now int64) (cachedWork, error
 func (s *cacheStore) counts(ctx context.Context) (works, cached, pending, failed int64, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(tracks<>''),0),COALESCE(SUM(tracks=''),0),COALESCE(SUM(error<>''),0) FROM works WHERE active=1`).Scan(&works, &cached, &pending, &failed)
 	return
-}
-func (s *cacheStore) nextIndexJob(ctx context.Context) (indexJob, error) {
-	var j indexJob
-	err := s.db.QueryRowContext(ctx, `SELECT id,old_path,new_path,revision FROM index_jobs ORDER BY id LIMIT 1`).Scan(&j.ID, &j.OldPath, &j.NewPath, &j.Revision)
-	return j, err
 }
 func (s *cacheStore) cacheBytes() int64 {
 	var total int64

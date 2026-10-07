@@ -47,6 +47,10 @@ type JMReaderPage struct {
 	Segments int    `json:"segments"`
 	GIF      bool   `json:"gif"`
 }
+type JMReaderTag struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
 type JMReaderManifest struct {
 	Source      string            `json:"source"`
 	Mode        string            `json:"mode"`
@@ -57,9 +61,11 @@ type JMReaderManifest struct {
 	Description string            `json:"description"`
 	Authors     []string          `json:"authors"`
 	Tags        []string          `json:"tags"`
+	TagLinks    []JMReaderTag     `json:"tag_links,omitempty"`
 	Date        string            `json:"date"`
 	Updated     int64             `json:"updated"`
 	Cover       string            `json:"cover"`
 	Chapters    []JMReaderChapter `json:"chapters"`
 	Pages       []JMReaderPage    `json:"pages"`
+	Unavailable bool              `json:"unavailable,omitempty"`
 }

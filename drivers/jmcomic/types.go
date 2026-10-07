@@ -132,6 +132,8 @@ type syncState struct {
 	RetryAt       int64  `json:"retry_at"`
 	FeedRetryAt   int64  `json:"feed_retry_at"`
 	Error         string `json:"error"`
+	ImageHost     string `json:"image_host,omitempty"`
+	LastTags      int64  `json:"last_tags,omitempty"`
 }
 
 func encode(v any) string { b, _ := json.Marshal(v); return string(b) }

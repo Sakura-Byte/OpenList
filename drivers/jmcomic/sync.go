@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 func (d *JMComic) recordFailure(ctx context.Context, kind, key string, e error) {
@@ -20,7 +19,11 @@ func (d *JMComic) recordFailure(ctx context.Context, kind, key string, e error) 
 		return
 	}
 	d.store.queue(ctx, kind, key)
-	d.store.db.ExecContext(ctx, `UPDATE tasks SET error=?,retry_at=?,manual=0 WHERE kind=? AND key=?`, e.Error(), time.Now().Add(time.Hour).Unix(), kind, key)
+	delay := time.Hour
+	if errors.Is(e, errNoAlbumDetail) {
+		delay = 5 * time.Minute
+	}
+	d.store.db.ExecContext(ctx, `UPDATE tasks SET error=?,retry_at=?,manual=0 WHERE kind=? AND key=?`, e.Error(), time.Now().Add(delay).Unix(), kind, key)
 	d.mu.Lock()
 	d.state.Error = e.Error()
 	d.store.saveState(ctx, d.state)
@@ -206,11 +209,14 @@ func parseAlbumPage(b []byte) ([]album, error) {
 	return nil, errors.New("missing JMComic feed content")
 }
 func (d *JMComic) pagedFeed(ctx context.Context, route string, q url.Values) ([]album, error) {
+	return d.pagedFeedPriority(ctx, route, q, false)
+}
+func (d *JMComic) pagedFeedPriority(ctx context.Context, route string, q url.Values, high bool) ([]album, error) {
 	var out []album
 	seen := map[id]bool{}
 	for n := 1; len(out) < d.FeedLimit; n++ {
 		q.Set("page", strconv.Itoa(n))
-		b, e := d.request(ctx, route, q, false, false)
+		b, e := d.request(ctx, route, q, high, false)
 		if e != nil {
 			return nil, e
 		}
@@ -237,37 +243,80 @@ func (d *JMComic) pagedFeed(ctx context.Context, route string, q url.Values) ([]
 			}
 		}
 		if added == 0 {
-			return nil, errors.New("JMComic feed pagination repeated")
+			// Bounded dynamic lists may ignore page numbers (the daily ranking
+			// returns the same fixed list). Stop at the unique prefix. Full
+			// catalog scans retain their stricter no-progress failure checks.
+			return out, nil
 		}
 	}
 	return out, nil
 }
-func (d *JMComic) syncFeeds(ctx context.Context) error {
-	now := time.Now().Unix()
+func (d *JMComic) feedSections(ctx context.Context) ([]section, error) {
 	var raw json.RawMessage
 	if e := d.json(ctx, "/promote", url.Values{"_": {strconv.FormatInt(time.Now().UnixMilli(), 10)}}, false, &raw); e != nil {
-		return e
+		return nil, e
+	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		return nil, errors.New("null JMComic promote sections")
 	}
 	var sections []section
 	if e := json.Unmarshal(raw, &sections); e != nil {
 		var one section
 		if e = json.Unmarshal(raw, &one); e != nil {
-			return e
+			return nil, e
+		}
+		if one.Title == "" && one.Name == "" && one.Content == nil {
+			return nil, errors.New("missing JMComic promote sections")
 		}
 		sections = []section{one}
 	}
-	var today []album
-	seen := map[id]bool{}
-	for _, s := range sections {
-		for _, a := range s.Content {
-			if !seen[a.ID] && len(today) < d.FeedLimit {
-				seen[a.ID] = true
-				today = append(today, a)
+	return sections, nil
+}
+func (d *JMComic) syncFeeds(ctx context.Context) error {
+	now := time.Now().Unix()
+	var failures []error
+	if e := d.syncTagCatalog(ctx); e != nil {
+		failures = append(failures, fmt.Errorf("/标签: %w", e))
+	}
+	if e := d.store.saveTagCatalog(ctx, strings.Split(strings.ReplaceAll(d.Tags, "\r", ""), "\n")); e != nil {
+		return e
+	}
+	refresh := func(p, route string, query url.Values) error {
+		d.mu.Lock()
+		d.feedCurrent = p
+		d.mu.Unlock()
+		items, e := d.pagedFeed(ctx, route, query)
+		if e == nil {
+			e = d.store.saveFeed(ctx, p, items, now)
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if e != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", p, e))
+		}
+		return nil
+	}
+	sections, e := d.feedSections(ctx)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if e != nil {
+		failures = append(failures, fmt.Errorf("/今日推荐: %w", e))
+	} else {
+		var today []album
+		seen := map[id]bool{}
+		for _, s := range sections {
+			for _, a := range s.Content {
+				if !seen[a.ID] && len(today) < d.FeedLimit {
+					seen[a.ID] = true
+					today = append(today, a)
+				}
 			}
 		}
-	}
-	if e := d.store.saveFeed(ctx, "/今日推荐", today, now); e != nil {
-		return e
+		if e := d.store.saveFeed(ctx, "/今日推荐", today, now); e != nil {
+			failures = append(failures, fmt.Errorf("/今日推荐: %w", e))
+		}
 	}
 	for _, s := range sections {
 		title := s.Title
@@ -307,49 +356,43 @@ func (d *JMComic) syncFeeds(ctx context.Context) error {
 		default:
 			continue
 		}
-		d.mu.Lock()
-		d.feedCurrent = p
-		d.mu.Unlock()
-		items, e := d.pagedFeed(ctx, route, q)
-		if e != nil {
-			return e
-		}
-		if e = d.store.saveFeed(ctx, p, items, now); e != nil {
+		if e := refresh(p, route, q); e != nil {
 			return e
 		}
 	}
 	filters := []struct{ path, category, order string }{{"/最近更新", "0", "mr"}, {"/排行榜/日榜", "0", "mv_t"}, {"/排行榜/周榜", "0", "mv_w"}, {"/排行榜/月榜", "0", "mv_m"}, {"/排行榜/总榜", "0", "mv"}, {"/分类/同人", "doujin", "mr"}, {"/分类/单本", "single", "mr"}, {"/分类/短篇", "short", "mr"}, {"/分类/其他", "another", "mr"}, {"/分类/韩漫", "hanman", "mr"}, {"/分类/美漫", "meiman", "mr"}, {"/分类/Cosplay", "doujin_cosplay", "mr"}, {"/分类/3D", "3D", "mr"}, {"/分类/英文", "english_site", "mr"}}
 	for _, f := range filters {
-		d.mu.Lock()
-		d.feedCurrent = f.path
-		d.mu.Unlock()
-		items, e := d.pagedFeed(ctx, "/categories/filter", url.Values{"c": {f.category}, "o": {f.order}, "order": {""}})
-		if e != nil {
-			return e
-		}
-		if e = d.store.saveFeed(ctx, f.path, items, now); e != nil {
+		if e := refresh(f.path, "/categories/filter", url.Values{"c": {f.category}, "o": {f.order}, "order": {""}}); e != nil {
 			return e
 		}
 	}
-	for _, tag := range strings.Split(strings.ReplaceAll(d.Tags, "\r", ""), "\n") {
+	visited, e := d.store.visitedTags(ctx)
+	if e != nil {
+		return e
+	}
+	seenTags := map[string]bool{}
+	for _, tag := range append(strings.Split(strings.ReplaceAll(d.Tags, "\r", ""), "\n"), visited...) {
 		tag = strings.TrimSpace(tag)
-		if tag == "" {
+		if tag == "" || seenTags[tag] {
 			continue
 		}
-		p := "/标签/" + safeName(tag)
+		seenTags[tag] = true
+		p := tagPath(tag)
 		d.mu.Lock()
 		d.feedCurrent = p
 		d.mu.Unlock()
-		items, e := d.pagedFeed(ctx, "/search", url.Values{"search_query": {tag}, "main_tag": {"3"}, "o": {"mr"}, "t": {"a"}})
-		if e != nil {
-			return e
+		if e := d.ensureTagFeed(ctx, tag, true, false); e != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", p, e))
 		}
-		if e = d.store.saveFeed(ctx, p, items, now); e != nil {
-			return e
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 	}
+	if len(failures) != 0 {
+		return fmt.Errorf("JMComic feeds: %w", errors.Join(failures...))
+	}
 	// Replace the set of dynamic entry names only after a complete successful run.
-	_, e := d.store.db.ExecContext(ctx, `DELETE FROM feed_members WHERE path IN (SELECT path FROM feeds WHERE updated<>?)`, now)
+	_, e = d.store.db.ExecContext(ctx, `DELETE FROM feed_members WHERE path IN (SELECT path FROM feeds WHERE updated<>?)`, now)
 	if e != nil {
 		return e
 	}
@@ -382,6 +425,9 @@ func (d *JMComic) feedLoop() {
 			d.state.LastFeeds = time.Now().Unix()
 			d.state.FeedRequested = false
 			d.state.FeedRetryAt = 0
+			if strings.HasPrefix(d.state.Error, "JMComic feeds:") || d.state.Error == "JMComic feed pagination repeated" {
+				d.state.Error = ""
+			}
 		} else if !errors.Is(e, context.Canceled) {
 			d.state.Error = e.Error()
 			d.state.FeedRetryAt = time.Now().Add(time.Hour).Unix()
@@ -409,6 +455,10 @@ func (d *JMComic) taskLoop() {
 		d.manualCurrent = kind + " " + key
 		d.mu.Unlock()
 		switch kind {
+		case "tag_catalog":
+			e = d.fetchTagCatalog(d.ctx, manual)
+		case "tag":
+			e = d.ensureTagFeed(d.ctx, key, true, manual)
 		case "album":
 			var a cachedAlbum
 			a, e = d.store.album(d.ctx, key)
@@ -437,26 +487,6 @@ func (d *JMComic) taskLoop() {
 		d.mu.Lock()
 		d.manualCurrent = ""
 		d.mu.Unlock()
-	}
-}
-func (d *JMComic) indexLoop() {
-	defer d.wg.Done()
-	for d.ctx.Err() == nil {
-		var seq, revision int64
-		var old, new string
-		e := d.store.db.QueryRowContext(d.ctx, `SELECT id,old_path,new_path,revision FROM index_jobs ORDER BY id LIMIT 1`).Scan(&seq, &old, &new, &revision)
-		if e == nil {
-			c, cancel := context.WithTimeout(d.ctx, 30*time.Second)
-			ok, err := op.HandleCachedTreeUpdate(driver.WithCachedTraversal(c), d, old, new)
-			cancel()
-			if ok && err == nil {
-				d.store.db.ExecContext(d.ctx, `DELETE FROM index_jobs WHERE id=? AND revision=?`, seq, revision)
-				continue
-			}
-		}
-		if !sleepContext(d.ctx, 2*time.Second) {
-			return
-		}
 	}
 }
 func (d *JMComic) JMComicStatus(ctx context.Context) (driver.JMComicStatus, error) {

@@ -44,6 +44,8 @@ type JMComic struct {
 	apiClient                                  *http.Client
 	detailGroup                                singleflight.Group[detail]
 	treeGroup                                  singleflight.Group[chapterTree]
+	tagGroup                                   singleflight.Group[bool]
+	catalogGroup                               singleflight.Group[bool]
 	readerRefresh                              map[string]time.Time
 	sessionGroup                               singleflight.Group[bool]
 	sessionReady                               bool
@@ -118,6 +120,10 @@ func (d *JMComic) Init(ctx context.Context) error {
 		d.store.db.Close()
 		return e
 	}
+	if e = d.store.saveTagCatalog(ctx, strings.Split(strings.ReplaceAll(d.Tags, "\r", ""), "\n")); e != nil {
+		d.store.db.Close()
+		return e
+	}
 	api := *base.APIClientFor(d)
 	api.Timeout = 30 * time.Second
 	api.Jar, e = cookiejar.New(nil)
@@ -127,10 +133,6 @@ func (d *JMComic) Init(ctx context.Context) error {
 	}
 	d.apiClient = &api
 	if d.state.Mode != d.Mode {
-		if e = d.store.reindexCachedWorks(ctx); e != nil {
-			d.store.db.Close()
-			return e
-		}
 		d.state.Mode = d.Mode
 		if e = d.store.saveState(ctx, d.state); e != nil {
 			d.store.db.Close()
@@ -144,12 +146,11 @@ func (d *JMComic) Init(ctx context.Context) error {
 	d.closing = false
 	d.phase = "idle"
 	d.sessionReady = false
-	d.wg.Add(4)
+	d.wg.Add(3)
 	d.mu.Unlock()
 	go d.catalogLoop()
 	go d.feedLoop()
 	go d.taskLoop()
-	go d.indexLoop()
 	return nil
 }
 func (d *JMComic) begin(ctx context.Context) (context.Context, func(), error) {
@@ -194,7 +195,10 @@ type object struct {
 	cover              string
 	page               *page
 	content            []byte
+	tag                *model.TagInfo
 }
+
+func (o *object) GetTagInfo() *model.TagInfo { return o.tag }
 
 func (o *object) GetReaderInfo() *model.ReaderInfo { return o.reader }
 func (o *object) Thumb() string                    { return o.cover }
@@ -207,7 +211,7 @@ func (d *JMComic) albumObject(a album, parent string) *object {
 	o.ID = "album/" + o.albumID
 	o.Modified = time.Unix(int64(a.Updated), 0)
 	o.reader = &model.ReaderInfo{Kind: "album", Mode: d.Mode, AlbumID: o.albumID}
-	o.cover = validImageURL(a.Image)
+	o.cover = d.coverURL(a)
 	return o
 }
 func validImageURL(s string) string {
@@ -216,6 +220,37 @@ func validImageURL(s string) string {
 		return ""
 	}
 	return s
+}
+func validImageHost(s string) string {
+	s = strings.TrimRight(strings.TrimSpace(s), "/")
+	u, e := url.Parse(s)
+	if e != nil || validImageURL(s) == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	return s
+}
+func (d *JMComic) coverURL(a album) string {
+	if s := validImageURL(a.Image); s != "" {
+		return s
+	}
+	d.mu.Lock()
+	host := validImageHost(d.state.ImageHost)
+	d.mu.Unlock()
+	if host == "" {
+		return ""
+	}
+	if a.Image == "" {
+		if !validID(string(a.ID)) {
+			return ""
+		}
+		return host + "/media/albums/" + string(a.ID) + "_3x4.jpg"
+	}
+	u, e := url.Parse(a.Image)
+	if e != nil || u.IsAbs() || u.Host != "" || !strings.HasPrefix(path.Clean(u.Path), "/media/") {
+		return ""
+	}
+	base, _ := url.Parse(host)
+	return base.ResolveReference(u).String()
 }
 func (d *JMComic) Get(ctx context.Context, p string) (model.Obj, error) {
 	c, done, e := d.begin(ctx)
@@ -289,6 +324,33 @@ func (d *JMComic) list(ctx context.Context, o *object, cached bool) ([]model.Obj
 	}
 	if o.albumID != "" {
 		return d.albumChildren(ctx, o, cached)
+	}
+	if p == "/标签" {
+		if cached {
+			return out, nil
+		}
+		return d.tagFolders(ctx)
+	}
+	if o.tag != nil {
+		if cached {
+			return out, nil
+		}
+		t := cachedTag{Name: o.tag.Name, Path: o.Path}
+		var fetchError error
+		if !cached {
+			fetchError = d.ensureTagFeed(ctx, t.Name, false, true)
+		}
+		items, e := d.store.tagAlbums(ctx, t)
+		if e != nil {
+			return nil, e
+		}
+		if fetchError != nil && len(items) == 0 {
+			return nil, fetchError
+		}
+		for _, a := range items {
+			out = append(out, d.albumObject(a.Album, p))
+		}
+		return out, nil
 	}
 	if strings.HasPrefix(p, "/所有漫画") {
 		rows, e := d.store.db.QueryContext(ctx, `SELECT DISTINCT date FROM albums WHERE active=1 ORDER BY date DESC`)
@@ -379,10 +441,12 @@ func (d *JMComic) albumChildren(ctx context.Context, o *object, cached bool) ([]
 	dt := a.Detail
 	if !cached {
 		v, e := d.loadDetail(ctx, a, false, true)
-		if e != nil {
+		if e != nil && !errors.Is(e, errNoAlbumDetail) {
 			return nil, e
 		}
-		dt = &v
+		if e == nil {
+			dt = &v
+		}
 	}
 	out := []model.Obj{}
 	readme := fmt.Sprintf("# %s\n\n- JM ID: %s\n- 上架日期: %s\n- Mode: %s\n", a.Album.Name, o.albumID, a.Album.Date, d.Mode)
@@ -392,8 +456,8 @@ func (d *JMComic) albumChildren(ctx context.Context, o *object, cached bool) ([]
 	r := &object{Object: model.Object{ID: o.ID + "/readme", Name: "README.md", Path: path.Join(o.Path, "README.md"), Size: int64(len([]byte(readme)))}, content: []byte(readme)}
 	out = append(out, r)
 	if o.chapterID == "" {
-		if d.Mode == "server" && validImageURL(a.Album.Image) != "" {
-			out = append(out, &object{Object: model.Object{ID: o.ID + "/cover", Name: "cover.jpg", Path: path.Join(o.Path, "cover.jpg"), Size: 0}, albumID: o.albumID, page: &page{URL: a.Album.Image}})
+		if cover := d.coverURL(a.Album); d.Mode == "server" && cover != "" {
+			out = append(out, &object{Object: model.Object{ID: o.ID + "/cover", Name: "cover.jpg", Path: path.Join(o.Path, "cover.jpg"), Size: 0}, albumID: o.albumID, page: &page{URL: cover}})
 		}
 		if dt != nil {
 			for i, c := range dt.Series {
@@ -432,6 +496,21 @@ func (d *JMComic) albumChildren(ctx context.Context, o *object, cached bool) ([]
 func (d *JMComic) loadDetail(ctx context.Context, a cachedAlbum, force, high bool) (detail, error) {
 	if !force && a.Detail != nil && a.DetailVersion == int64(a.Album.Updated) {
 		return *a.Detail, nil
+	}
+	if !force {
+		var message string
+		var retryAt int64
+		e := d.store.db.QueryRowContext(ctx, `SELECT error,retry_at FROM tasks WHERE kind='album' AND key=?`, string(a.Album.ID)).Scan(&message, &retryAt)
+		if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			return detail{}, e
+		}
+		missing := fmt.Errorf("get JM%s details: %w", a.Album.ID, errNoAlbumDetail)
+		if e == nil && retryAt > time.Now().Unix() && message == missing.Error() {
+			if a.Detail != nil {
+				return *a.Detail, nil
+			}
+			return detail{}, missing
+		}
 	}
 	d.mu.Lock()
 	life := d.ctx

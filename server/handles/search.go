@@ -43,9 +43,30 @@ func Search(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+	meta, err := op.GetNearestMeta(req.Parent)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	if !canBrowse(c, user, meta, req.Parent, req.Password) {
+		return
+	}
+	if !search.Available(req.Parent) {
+		common.ErrorResp(c, errs.SearchNotAvailable, 404)
+		return
+	}
 	nodes, total, err := search.SearchFiltered(c, req.SearchReq, func(node model.SearchNode) bool {
 		if !utils.IsSubPath(user.BasePath, node.Parent) {
 			return false
+		}
+		if node.AccessPath != "" {
+			aliasMeta, err := op.GetNearestMeta(path.Dir(node.AccessPath))
+			if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+				return false
+			}
+			if !utils.IsSubPath(user.BasePath, node.AccessPath) || !common.CanAccess(user, aliasMeta, node.AccessPath, req.Password) {
+				return false
+			}
 		}
 		meta, err := op.GetNearestMeta(node.Parent)
 		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {

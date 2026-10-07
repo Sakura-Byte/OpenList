@@ -3,8 +3,10 @@ package search
 import (
 	"context"
 	"fmt"
+	"path"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -48,12 +50,12 @@ func Init(mode string) error {
 }
 
 func Search(ctx context.Context, req model.SearchReq) ([]model.SearchNode, int64, error) {
-	return instance.Search(ctx, req)
+	return SearchFiltered(ctx, req, nil)
 }
 
 const searchBatchSize = 1000
 
-func SearchFiltered(ctx context.Context, req model.SearchReq, filter searcher.Filter) ([]model.SearchNode, int64, error) {
+func searchIndexedFiltered(ctx context.Context, req model.SearchReq, filter searcher.Filter) ([]model.SearchNode, int64, error) {
 	if filteredSearcher, ok := instance.(searcher.FilteredSearcher); ok {
 		return filteredSearcher.SearchFiltered(ctx, req, filter)
 	}
@@ -95,6 +97,11 @@ func Index(ctx context.Context, parent string, obj model.Obj) error {
 	if instance == nil {
 		return errs.SearchNotAvailable
 	}
+	if storage, _, err := op.GetStorageAndActualPath(parent); err == nil {
+		if _, direct := storage.(driver.CachedSearcher); direct {
+			return nil
+		}
+	}
 	return instance.Index(ctx, model.SearchNode{
 		Parent: parent,
 		Name:   obj.GetName(),
@@ -117,6 +124,11 @@ func BatchIndex(ctx context.Context, objs []ObjWithParent) error {
 	}
 	var searchNodes []model.SearchNode
 	for i := range objs {
+		if storage, _, err := op.GetStorageAndActualPath(path.Join(objs[i].Parent, objs[i].GetName())); err == nil {
+			if _, direct := storage.(driver.CachedSearcher); direct {
+				continue
+			}
+		}
 		searchNodes = append(searchNodes, model.SearchNode{
 			Parent: objs[i].Parent,
 			Name:   objs[i].GetName(),

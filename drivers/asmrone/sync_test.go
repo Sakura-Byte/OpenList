@@ -60,27 +60,17 @@ func TestDirectoryCollisionsPreserveOriginalMetadata(t *testing.T) {
 	require.Equal(t, w.name(), latest.name())
 }
 
-func TestRenameCycleKeepsFinalIndexEventLast(t *testing.T) {
+func TestRenameCycleSearchUsesFinalCache(t *testing.T) {
 	d := newTestDriver(t, "http://127.0.0.1:1", t.TempDir())
 	ctx := context.Background()
 	w := seedWork(t, d, 1, "A")
-	_, err := d.store.db.Exec(`DELETE FROM index_jobs`)
-	require.NoError(t, err)
 	for _, title := range []string{"B", "A", "B"} {
 		w.Title = title
 		require.NoError(t, d.store.upsertPage(ctx, []work{w.work}, ""))
 	}
-	rows, err := d.store.db.Query(`SELECT old_path,new_path FROM index_jobs ORDER BY id`)
-	require.NoError(t, err)
-	defer rows.Close()
-	var events [][2]string
-	for rows.Next() {
-		var oldPath, newPath string
-		require.NoError(t, rows.Scan(&oldPath, &newPath))
-		events = append(events, [2]string{oldPath, newPath})
-	}
-	require.NoError(t, rows.Err())
-	require.Equal(t, [][2]string{{"/RJ000001 B", "/RJ000001 A"}, {"/RJ000001 A", "/RJ000001 B"}}, events)
+	var nodes []model.SearchNode
+	require.NoError(t, d.SearchCached(ctx, model.SearchReq{Parent: "/", Scope: 1, Keywords: "RJ000001"}, func(n model.SearchNode) error { nodes = append(nodes, n); return nil }))
+	require.Equal(t, []model.SearchNode{{Parent: "/RJ000000~RJ009999", Name: "RJ000001 B", IsDir: true}}, nodes)
 }
 
 func TestManualRefreshPreemptsCatalogPages(t *testing.T) {

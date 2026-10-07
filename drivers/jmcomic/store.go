@@ -39,10 +39,11 @@ func openStore(filename string) (*cacheStore, error) {
 		`CREATE TABLE IF NOT EXISTS chapters (id TEXT PRIMARY KEY,album_id TEXT NOT NULL,data TEXT NOT NULL,version INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS chapter_albums ON chapters(album_id)`,
 		`CREATE TABLE IF NOT EXISTS feeds (path TEXT PRIMARY KEY,updated INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS tags (name TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE)`,
 		`CREATE TABLE IF NOT EXISTS feed_members (path TEXT NOT NULL,id TEXT NOT NULL,position INTEGER NOT NULL,PRIMARY KEY(path,id))`,
 		`CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1),data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS tasks (kind TEXT NOT NULL,key TEXT NOT NULL,retry_at INTEGER NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '',manual INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(kind,key))`,
-		`CREATE TABLE IF NOT EXISTS index_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT,old_path TEXT NOT NULL,new_path TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1,UNIQUE(old_path,new_path))`,
+		`DROP TABLE IF EXISTS index_jobs`,
 	} {
 		if _, e = db.Exec(q); e != nil {
 			db.Close()
@@ -61,10 +62,6 @@ func openStore(filename string) (*cacheStore, error) {
 		}
 	}
 	return s, nil
-}
-func enqueueIndex(ctx context.Context, tx *sql.Tx, old, new string) error {
-	_, e := tx.ExecContext(ctx, `INSERT INTO index_jobs(old_path,new_path) VALUES(?,?) ON CONFLICT(old_path,new_path) DO UPDATE SET id=(SELECT COALESCE(MAX(id),0)+1 FROM index_jobs),revision=index_jobs.revision+1`, old, new)
-	return e
 }
 
 const albumColumns = `data,detail,detail_version,active,seen,error,retry_at`
@@ -117,9 +114,8 @@ func (s *cacheStore) upsert(ctx context.Context, items []album, generation strin
 		if !validID(string(a.ID)) || a.Name == "" {
 			return errors.New("invalid JMComic album summary")
 		}
-		var raw, oldPath string
-		var active bool
-		e := tx.QueryRowContext(ctx, `SELECT data,path,active FROM albums WHERE id=?`, string(a.ID)).Scan(&raw, &oldPath, &active)
+		var raw string
+		e := tx.QueryRowContext(ctx, `SELECT data FROM albums WHERE id=?`, string(a.ID)).Scan(&raw)
 		if e != nil && !errors.Is(e, sql.ErrNoRows) {
 			return e
 		}
@@ -144,11 +140,6 @@ func (s *cacheStore) upsert(ctx context.Context, items []album, generation strin
 		if _, e = tx.ExecContext(ctx, `INSERT INTO albums(id,data,path,date,updated,seen) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,path=excluded.path,date=excluded.date,updated=excluded.updated,active=1,seen=CASE WHEN excluded.seen='' THEN albums.seen ELSE excluded.seen END`, string(a.ID), encode(a), a.canonical(), a.Date, int64(a.Updated), generation); e != nil {
 			return e
 		}
-		if oldPath != a.canonical() || raw != encode(a) || !active {
-			if e = enqueueIndex(ctx, tx, oldPath, a.canonical()); e != nil {
-				return e
-			}
-		}
 	}
 	return tx.Commit()
 }
@@ -159,9 +150,6 @@ func (s *cacheStore) saveDetail(ctx context.Context, a cachedAlbum, dt detail) e
 	}
 	defer tx.Rollback()
 	if _, e = tx.ExecContext(ctx, `UPDATE albums SET detail=?,detail_version=?,error='',retry_at=0 WHERE id=?`, encode(dt), int64(a.Album.Updated), string(a.Album.ID)); e != nil {
-		return e
-	}
-	if e = enqueueCurrentIndex(ctx, tx, string(a.Album.ID)); e != nil {
 		return e
 	}
 	return tx.Commit()
@@ -186,9 +174,6 @@ func (s *cacheStore) saveTree(ctx context.Context, a album, t chapterTree) error
 	if _, e = tx.ExecContext(ctx, `INSERT INTO chapters(id,album_id,data,version) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET album_id=excluded.album_id,data=excluded.data,version=excluded.version`, t.ID, string(a.ID), encode(t), t.Version); e != nil {
 		return e
 	}
-	if e = enqueueCurrentIndex(ctx, tx, string(a.ID)); e != nil {
-		return e
-	}
 	return tx.Commit()
 }
 func (s *cacheStore) hide(ctx context.Context, a album) error {
@@ -202,9 +187,6 @@ func (s *cacheStore) hideBatch(ctx context.Context, albums []album) error {
 	defer tx.Rollback()
 	for _, a := range albums {
 		if _, e = tx.ExecContext(ctx, `UPDATE albums SET active=0 WHERE id=?`, string(a.ID)); e != nil {
-			return e
-		}
-		if e = enqueueCurrentIndex(ctx, tx, string(a.ID)); e != nil {
 			return e
 		}
 	}
@@ -254,22 +236,6 @@ func (s *cacheStore) queue(ctx context.Context, kind, key string) error {
 }
 func (s *cacheStore) queueManual(ctx context.Context, kind, key string) error {
 	_, e := s.db.ExecContext(ctx, `INSERT INTO tasks(kind,key,manual) VALUES(?,?,1) ON CONFLICT(kind,key) DO UPDATE SET manual=1,retry_at=0`, kind, key)
-	return e
-}
-func enqueueCurrentIndex(ctx context.Context, tx *sql.Tx, key string) error {
-	var p string
-	var active bool
-	if e := tx.QueryRowContext(ctx, `SELECT path,active FROM albums WHERE id=?`, key).Scan(&p, &active); e != nil {
-		return e
-	}
-	next := p
-	if !active {
-		next = ""
-	}
-	return enqueueIndex(ctx, tx, p, next)
-}
-func (s *cacheStore) reindexCachedWorks(ctx context.Context) error {
-	_, e := s.db.ExecContext(ctx, `INSERT INTO index_jobs(old_path,new_path) SELECT path,path FROM albums WHERE active=1 AND detail<>'' ON CONFLICT(old_path,new_path) DO UPDATE SET id=(SELECT COALESCE(MAX(id),0)+1 FROM index_jobs),revision=index_jobs.revision+1`)
 	return e
 }
 func (s *cacheStore) cacheBytes() int64 {

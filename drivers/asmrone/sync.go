@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
-	"github.com/OpenListTeam/OpenList/v4/internal/op"
 )
 
 func waitContext(ctx context.Context, duration time.Duration) error {
@@ -305,7 +304,6 @@ func (d *ASMRONE) background() {
 		if d.ctx.Err() != nil {
 			return
 		}
-		d.processIndexJobs()
 		d.mu.Lock()
 		state := d.state
 		mode := state.Requested
@@ -371,26 +369,6 @@ func (d *ASMRONE) background() {
 			return
 		case <-d.wake:
 		case <-time.After(time.Second):
-		}
-	}
-}
-func (d *ASMRONE) processIndexJobs() {
-	for count := 0; count < 25; count++ {
-		j, err := d.store.nextIndexJob(d.ctx)
-		if err != nil {
-			return
-		}
-		jobCtx, cancel := context.WithTimeout(d.ctx, 30*time.Second)
-		ok, err := op.HandleCachedTreeUpdate(driver.WithCachedTraversal(jobCtx), d, j.OldPath, j.NewPath)
-		cancel()
-		if err != nil && d.ctx.Err() == nil {
-			d.setError(fmt.Errorf("update ASMR.ONE search index: %w", err))
-		}
-		if err != nil || !ok {
-			return
-		}
-		if _, err := d.store.db.ExecContext(d.ctx, `DELETE FROM index_jobs WHERE id=? AND revision=?`, j.ID, j.Revision); err != nil {
-			return
 		}
 	}
 }

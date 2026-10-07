@@ -21,10 +21,13 @@ type SearchReq struct {
 }
 
 type SearchNode struct {
-	Parent string `json:"parent" gorm:"index"`
-	Name   string `json:"name"`
-	IsDir  bool   `json:"is_dir"`
-	Size   int64  `json:"size"`
+	// AccessPath carries the alias used to find a canonical result. It is only
+	// used for request-time permission checks, never persisted or sent to clients.
+	AccessPath string `json:"-" gorm:"-"`
+	Parent     string `json:"parent" gorm:"index"`
+	Name       string `json:"name"`
+	IsDir      bool   `json:"is_dir"`
+	Size       int64  `json:"size"`
 }
 
 func (p *SearchReq) Validate() error {

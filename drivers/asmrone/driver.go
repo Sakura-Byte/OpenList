@@ -147,7 +147,14 @@ type object struct {
 
 func (o *object) Thumb() string { return o.cover }
 func workObject(w cachedWork) *object {
-	return &object{Object: model.Object{ID: strconv.FormatInt(int64(w.ID), 10), Name: w.name(), Path: "/" + w.name(), IsFolder: true, Modified: w.modified()}, workID: int64(w.ID), cover: w.Thumbnail}
+	return &object{Object: model.Object{ID: strconv.FormatInt(int64(w.ID), 10), Name: w.name(), Path: w.path(), IsFolder: true, Modified: w.modified()}, workID: int64(w.ID), cover: w.Thumbnail}
+}
+func rangeObject(info rangeInfo) *object {
+	obj := &object{Object: model.Object{ID: "range:" + info.Name, Name: info.Name, Path: "/" + info.Name, IsFolder: true}}
+	if info.ModifiedAt > 0 {
+		obj.Modified = time.UnixMilli(info.ModifiedAt)
+	}
+	return obj
 }
 func nodeObject(w cachedWork, n track, parent string) *object {
 	id := n.Hash
@@ -162,22 +169,35 @@ func (d *ASMRONE) Get(ctx context.Context, p string) (model.Obj, error) {
 		return &object{Object: model.Object{ID: "/", Path: "/", Name: "/", IsFolder: true}}, nil
 	}
 	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
-	w, err := d.store.byName(ctx, parts[0])
+	if len(parts) == 1 {
+		info, err := d.store.rangeByName(ctx, parts[0])
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errs.ObjectNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		return rangeObject(info), nil
+	}
+	w, err := d.store.byName(ctx, parts[1])
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errs.ObjectNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(parts) == 1 {
+	if parts[0] != w.rangeName() {
+		return nil, errs.ObjectNotFound
+	}
+	if len(parts) == 2 {
 		return workObject(w), nil
 	}
-	nodes, err := d.workChildren(ctx, w, "/"+parts[0], driver.IsCachedTraversal(ctx))
+	nodes, err := d.workChildren(ctx, w, w.path(), driver.IsCachedTraversal(ctx))
 	if err != nil {
 		return nil, err
 	}
 	var found model.Obj
-	for i, segment := range parts[1:] {
+	for i, segment := range parts[2:] {
 		found = nil
 		for _, obj := range nodes {
 			if obj.GetName() == segment {
@@ -188,7 +208,7 @@ func (d *ASMRONE) Get(ctx context.Context, p string) (model.Obj, error) {
 		if found == nil {
 			return nil, errs.ObjectNotFound
 		}
-		if i < len(parts)-2 {
+		if i < len(parts)-3 {
 			o := found.(*object)
 			if !o.IsDir() {
 				return nil, errs.NotFolder
@@ -210,9 +230,24 @@ func (d *ASMRONE) ListCached(ctx context.Context, dir model.Obj, args model.List
 func (d *ASMRONE) list(ctx context.Context, dir model.Obj, cachedOnly bool) ([]model.Obj, error) {
 	p := path.Clean(dir.GetPath())
 	if p == "/" {
-		works, err := d.store.works(ctx)
+		ranges, err := d.store.ranges(ctx)
 		if err != nil {
 			return nil, err
+		}
+		result := make([]model.Obj, 0, len(ranges))
+		for _, info := range ranges {
+			result = append(result, rangeObject(info))
+		}
+		return result, nil
+	}
+	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	if len(parts) == 1 {
+		works, err := d.store.worksInRange(ctx, parts[0])
+		if err != nil {
+			return nil, err
+		}
+		if len(works) == 0 {
+			return nil, errs.ObjectNotFound
 		}
 		result := make([]model.Obj, 0, len(works))
 		for _, w := range works {
@@ -220,15 +255,17 @@ func (d *ASMRONE) list(ctx context.Context, dir model.Obj, cachedOnly bool) ([]m
 		}
 		return result, nil
 	}
-	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
-	w, err := d.store.byName(ctx, parts[0])
+	w, err := d.store.byName(ctx, parts[1])
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errs.ObjectNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	if len(parts) == 1 {
+	if parts[0] != w.rangeName() {
+		return nil, errs.ObjectNotFound
+	}
+	if len(parts) == 2 {
 		return d.workChildren(ctx, w, p, cachedOnly)
 	}
 	obj, err := d.Get(ctx, p)
@@ -250,6 +287,10 @@ func (d *ASMRONE) workChildren(ctx context.Context, w cachedWork, p string, cach
 	if !w.HasTracks && !cachedOnly {
 		var err error
 		nodes, err = d.loadTracks(ctx, int64(w.ID), false, true)
+		if err != nil {
+			return nil, err
+		}
+		w, err = d.store.byID(ctx, int64(w.ID))
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +350,8 @@ func (d *ASMRONE) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	}
 	client := *base.TransferClientFor(d)
 	if o.cover == "" {
-		client.Transport = &recoveryTransport{driver: d, base: client.Transport, workID: o.workID, hash: o.node.Hash, nodePath: o.Path}
+		parts := strings.SplitN(strings.TrimPrefix(o.Path, "/"), "/", 3)
+		client.Transport = &recoveryTransport{driver: d, base: client.Transport, workID: o.workID, hash: o.node.Hash, nodePath: parts[2]}
 	}
 	return &model.Link{URL: linkURL, HTTPClient: &client, Expiration: &expiry}, nil
 }
@@ -361,7 +403,7 @@ func (t *recoveryTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	find = func(children []track, parent string) {
 		for _, n := range children {
 			relative := path.Join(parent, n.Title)
-			if (t.hash != "" && n.Hash == t.hash) || (t.hash == "" && strings.TrimPrefix(t.nodePath, "/"+strings.Split(strings.TrimPrefix(t.nodePath, "/"), "/")[0]+"/") == relative) {
+			if (t.hash != "" && n.Hash == t.hash) || (t.hash == "" && t.nodePath == relative) {
 				link = mediaURL(n)
 			}
 			if n.isDir() {

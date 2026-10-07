@@ -12,6 +12,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/search"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/updatesite"
@@ -67,9 +68,11 @@ type ObjResp struct {
 	HashInfo     map[*utils.HashType]string `json:"hash_info"`
 	MountDetails *model.StorageDetails      `json:"mount_details,omitempty"`
 	Reader       *model.ReaderInfo          `json:"reader,omitempty"`
+	Tag          *model.TagInfo             `json:"tag,omitempty"`
 }
 
 type FsListResp struct {
+	SearchAvailable    bool              `json:"search_available"`
 	Content            []ObjResp         `json:"content"`
 	Total              int64             `json:"total"`
 	Readme             string            `json:"readme"`
@@ -149,6 +152,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	}
 	ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
 	common.SuccessResp(c, FsListResp{
+		SearchAvailable:    search.Available(reqPath),
 		Content:            toObjsResp(objs, reqPath, isEncrypt(meta, reqPath), user, ip),
 		Total:              int64(total),
 		Readme:             getReadme(meta, reqPath),
@@ -280,6 +284,7 @@ func toObjsResp(objs []model.Obj, parent string, encrypt bool, user *model.User,
 			Type:         utils.GetObjType(obj.GetName(), obj.IsDir()),
 			MountDetails: mountDetails,
 			Reader:       model.GetReaderInfo(obj),
+			Tag:          model.GetTagInfo(obj),
 		})
 	}
 	return resp
@@ -291,6 +296,7 @@ type FsGetReq struct {
 }
 
 type FsGetResp struct {
+	SearchAvailable bool `json:"search_available"`
 	ObjResp
 	RawURL   string    `json:"raw_url"`
 	Readme   string    `json:"readme"`
@@ -402,6 +408,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 	thumb, _ := model.GetThumb(obj)
 	mountDetails, _ := model.GetStorageDetails(obj)
 	common.SuccessResp(c, FsGetResp{
+		SearchAvailable: search.Available(reqPath),
 		ObjResp: ObjResp{
 			Name:         obj.GetName(),
 			Size:         obj.GetSize(),

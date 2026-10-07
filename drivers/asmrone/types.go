@@ -3,6 +3,7 @@ package asmrone
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -53,10 +54,46 @@ func (w work) name() string {
 	}
 	return safeName(id + " " + w.Title)
 }
+func (w work) rangeName() string {
+	source := strings.ToUpper(strings.TrimSpace(w.SourceID))
+	if source == "" {
+		source = fmt.Sprintf("RJ%06d", w.ID)
+	}
+	if len(source) < 3 || (source[:2] != "RJ" && source[:2] != "VJ" && source[:2] != "BJ") {
+		return "其他作品"
+	}
+	numberPart := source[2:]
+	for _, r := range numberPart {
+		if r < '0' || r > '9' {
+			return "其他作品"
+		}
+	}
+	n, err := strconv.ParseUint(numberPart, 10, 63)
+	if err != nil {
+		return "其他作品"
+	}
+	start := n / 10000 * 10000
+	width := 6
+	if n >= 1000000 {
+		width = 8
+	}
+	return fmt.Sprintf("RJ%0*d~RJ%0*d", width, start, width, start+9999)
+}
 func (w work) modified() time.Time { t, _ := time.Parse("2006-01-02", w.Created); return t }
 func (w work) readme() []byte {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s\n\n%s\n\n- ID: %s\n- API ID: %d\n- Circle: %s\n- Release: %s\n", w.Title, w.Introduction, w.SourceID, w.ID, w.Circle.Name, w.Release)
+	fmt.Fprintf(&b, "# %s\n\n", w.Title)
+	cover := w.Cover
+	if cover == "" {
+		cover = w.Thumbnail
+	}
+	if cover != "" {
+		// The frontend classifies the raw Markdown destination before parsing.
+		// Angle wrappers look like local paths; encode delimiters instead.
+		cover = strings.NewReplacer("<", "%3C", ">", "%3E", "(", "%28", ")", "%29", " ", "%20", "\r", "%0D", "\n", "%0A").Replace(cover)
+		fmt.Fprintf(&b, "![Cover](%s)\n\n", cover)
+	}
+	fmt.Fprintf(&b, "%s\n\n- ID: %s\n- API ID: %d\n- Circle: %s\n- Release: %s\n", w.Introduction, w.SourceID, w.ID, w.Circle.Name, w.Release)
 	b.WriteString("- Voice actors: ")
 	for i, va := range w.VAs {
 		if i > 0 {
@@ -166,6 +203,7 @@ type cachedWork struct {
 	Tracks        []track
 	HasTracks     bool
 	TracksAt      int64
+	ModifiedAt    int64
 	Error         string
 	RetryAt       int64
 }
@@ -175,6 +213,18 @@ func (w cachedWork) name() string {
 		return w.DirectoryName
 	}
 	return w.work.name()
+}
+func (w cachedWork) path() string { return path.Join("/", w.rangeName(), w.name()) }
+func (w cachedWork) modified() time.Time {
+	if updated := max(w.ModifiedAt, w.TracksAt*1000); updated > 0 {
+		return time.UnixMilli(updated)
+	}
+	return w.work.modified()
+}
+
+type rangeInfo struct {
+	Name       string
+	ModifiedAt int64
 }
 
 type syncState struct {
@@ -186,11 +236,6 @@ type syncState struct {
 	RetryAt       int64
 	Requested     string
 	LastError     string
-}
-type indexJob struct {
-	ID               int64
-	OldPath, NewPath string
-	Revision         int64
 }
 
 func encode(v any) string { b, _ := json.Marshal(v); return string(b) }

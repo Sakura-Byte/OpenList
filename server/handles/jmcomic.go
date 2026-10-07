@@ -133,6 +133,18 @@ func prepareJMReader(c *gin.Context, user *model.User, requestPath, password str
 		chapters = append(chapters, ch)
 	}
 	m.Chapters = chapters
+	tags := make([]driver.JMReaderTag, 0, len(m.TagLinks))
+	for _, tag := range m.TagLinks {
+		if !allowed(full(tag.Path)) {
+			continue
+		}
+		tag.Path, e = visible(tag.Path)
+		if e != nil {
+			continue
+		}
+		tags = append(tags, tag)
+	}
+	m.TagLinks = tags
 	if m.ChapterID != "" && currentFull == "" {
 		return errors.New("reader chapter is not accessible")
 	}

@@ -26,6 +26,24 @@ const templateSecret = "18comicAPPContent"
 const appVersion = "2.1.7"
 const mobileUA = "Mozilla/5.0 (Linux; Android 9; V1938CT Build/PQ3A.190705.11211812; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/91.0.4472.114 Safari/537.36"
 
+var errNoAlbumDetail = errors.New("JMComic upstream currently provides no readable work details")
+
+func emptyAlbumPayload(b []byte) bool {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 {
+		return true
+	}
+	var compact bytes.Buffer
+	if json.Compact(&compact, b) != nil {
+		return false
+	}
+	switch compact.String() {
+	case "", `""`, "[]", "{}", "null":
+		return true
+	}
+	return false
+}
+
 type upstreamError struct {
 	Status int
 	Retry  time.Duration
@@ -143,6 +161,9 @@ func (d *JMComic) request(ctx context.Context, route string, query url.Values, h
 				return &upstreamError{Status: int(envelope.Code), Retry: retry}
 			}
 			var encoded string
+			if route == "/album" && emptyAlbumPayload(envelope.Data) {
+				return errNoAlbumDetail
+			}
 			if e = json.Unmarshal(envelope.Data, &encoded); e != nil {
 				return errors.New("unexpected JMComic metadata payload")
 			}
@@ -150,10 +171,16 @@ func (d *JMComic) request(ctx context.Context, route string, query url.Values, h
 			if e != nil {
 				return fmt.Errorf("decode JMComic payload: %w", e)
 			}
+			if route == "/album" && emptyAlbumPayload(out) {
+				return errNoAlbumDetail
+			}
 			return nil
 		})
 		if e == nil {
 			return out, nil
+		}
+		if errors.Is(e, errNoAlbumDetail) {
+			return nil, e
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -196,11 +223,27 @@ func (d *JMComic) ensureSession(ctx context.Context, high bool) error {
 		if ready {
 			return true, nil
 		}
-		_, e = d.request(c, "/setting", nil, high, false)
+		body, e := d.request(c, "/setting", nil, high, false)
 		if e != nil {
 			return false, e
 		}
+		var settings struct {
+			ImageHost json.RawMessage `json:"img_host"`
+		}
+		if e := json.Unmarshal(body, &settings); e != nil {
+			return false, fmt.Errorf("parse JMComic settings: %w", e)
+		}
+		var imageHost string
+		_ = json.Unmarshal(settings.ImageHost, &imageHost)
+		imageHost = validImageHost(imageHost)
 		d.mu.Lock()
+		if imageHost != "" && imageHost != d.state.ImageHost {
+			d.state.ImageHost = imageHost
+			if e := d.store.saveState(c, d.state); e != nil {
+				d.mu.Unlock()
+				return false, e
+			}
+		}
 		d.sessionReady = true
 		d.mu.Unlock()
 		return true, nil
@@ -239,7 +282,7 @@ func (d *JMComic) fetchDetail(ctx context.Context, key string, high bool) (detai
 	var r detail
 	e := d.json(ctx, "/album", url.Values{"id": {key}}, high, &r)
 	if e != nil {
-		return r, e
+		return r, fmt.Errorf("get JM%s details: %w", key, e)
 	}
 	if string(r.ID) != key || r.Name == "" {
 		return r, errors.New("invalid JMComic album detail")
@@ -293,6 +336,14 @@ func assignedObject(s, name string) (string, error) {
 			quote = c
 			continue
 		}
+		if c == '/' && i+1 < len(s) && (s[i+1] == '/' || s[i+1] == '*') {
+			next, err := templateSpace(s, i)
+			if err != nil {
+				return "", err
+			}
+			i = next - 1
+			continue
+		}
 		if c == '{' {
 			depth++
 		}
@@ -324,11 +375,11 @@ func parseTemplate(b []byte, key, albumID string, version int64) (chapterTree, e
 	var r struct {
 		Images []string `json:"images"`
 	}
-	if e = json.Unmarshal([]byte(conf), &c); e != nil {
-		return t, e
+	if e = decodeTemplateObject(conf, &c); e != nil {
+		return t, fmt.Errorf("parse JMComic chapter config: %w", e)
 	}
-	if e = json.Unmarshal([]byte(result), &r); e != nil {
-		return t, e
+	if e = decodeTemplateObject(result, &r); e != nil {
+		return t, fmt.Errorf("parse JMComic chapter images: %w", e)
 	}
 	if string(c.ID) != key || r.Images == nil {
 		return t, errors.New("invalid JMComic chapter template")

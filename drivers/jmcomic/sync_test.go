@@ -197,6 +197,10 @@ func TestFeedsLimitTagsAndCacheOnlyTraversal(t *testing.T) {
 	var requests atomic.Int32
 	s := newMockServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
+		if r.URL.Path == "/categories" {
+			replyJSON(w, r, map[string]any{"blocks": []any{}})
+			return
+		}
 		if r.URL.Path == "/promote" {
 			replyJSON(w, r, []section{{ID: "3", Title: "Recommended", Type: "promote", Content: []album{{ID: "42", Name: "Example"}}}})
 			return
@@ -262,18 +266,15 @@ func TestPausedAutomaticRetriesWaitForExplicitRetry(t *testing.T) {
 	require.NoError(t, d.JMComicAction(context.Background(), "retry", ""))
 	require.Eventually(t, func() bool { return calls.Load() == 1 }, 3*time.Second, 20*time.Millisecond)
 }
-func TestMetadataCommitIndexesCurrentPath(t *testing.T) {
+func TestMetadataCommitSearchesCurrentPath(t *testing.T) {
 	s := newMockServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected upstream request") }))
 	defer s.Close()
 	d := newTestDriver(t, s.URL, t.TempDir(), "client")
 	old := seedAlbum(t, d, "42", "Old", "2026-07-21", 1)
 	next := seedAlbum(t, d, "42", "Renamed", "2026-07-22", 2)
-	_, e := d.store.db.Exec(`DELETE FROM index_jobs`)
-	require.NoError(t, e)
-	require.NoError(t, d.store.saveDetail(context.Background(), old, detail{ID: "42", Name: "Old"}))
+	require.NoError(t, d.store.saveDetail(context.Background(), old, detail{ID: "42", Name: "Old", Series: []chapter{{ID: "42", Name: "Chapter"}}}))
 	require.NoError(t, d.store.saveTree(context.Background(), old.Album, chapterTree{ID: "42", AlbumID: "42", Version: 1, Pages: []page{}}))
-	var from, to string
-	require.NoError(t, d.store.db.QueryRow(`SELECT old_path,new_path FROM index_jobs ORDER BY id DESC LIMIT 1`).Scan(&from, &to))
-	require.Equal(t, next.Album.canonical(), from)
-	require.Equal(t, next.Album.canonical(), to)
+	var nodes []model.SearchNode
+	require.NoError(t, d.SearchCached(context.Background(), model.SearchReq{Parent: "/", Keywords: "Chapter", Scope: 1}, func(n model.SearchNode) error { nodes = append(nodes, n); return nil }))
+	require.Equal(t, []model.SearchNode{{Parent: next.Album.canonical(), Name: "001 Chapter [42]", IsDir: true}}, nodes)
 }

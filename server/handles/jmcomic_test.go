@@ -45,6 +45,7 @@ func TestReaderManifestBasePathsPasswordsAndHiddenChapters(t *testing.T) {
 	require.NoError(t, e)
 	t.Cleanup(func() { _ = op.DeleteStorageById(context.Background(), id); c, _ := database.DB(); c.Close() })
 	require.NoError(t, db.CreateMeta(&model.Meta{Path: "/fixture/work", Password: "secret", PSub: true, Hide: "^hidden$", HSub: true}))
+	require.NoError(t, db.CreateMeta(&model.Meta{Path: "/fixture/标签", Hide: "^Hidden$", HSub: true}))
 	user := &model.User{ID: 12, Role: model.GENERAL, BasePath: "/fixture"}
 	out := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(out)
@@ -54,11 +55,19 @@ func TestReaderManifestBasePathsPasswordsAndHiddenChapters(t *testing.T) {
 	}
 	require.ErrorContains(t, prepareJMReader(c, user, "/fixture/work/allowed", "wrong", manifest("client")), "not accessible")
 	m := manifest("client")
+	m.TagLinks = []driver.JMReaderTag{{Name: "Visible", Path: "/标签/Visible"}, {Name: "Hidden", Path: "/标签/Hidden"}}
 	require.NoError(t, prepareJMReader(c, user, "/fixture/work/allowed", "secret", m))
 	require.Equal(t, "/work", m.AlbumPath)
 	require.Len(t, m.Chapters, 1)
 	require.Equal(t, "/work/allowed", m.Chapters[0].Path)
 	require.Equal(t, "https://images.example/page.png", m.Pages[0].URL)
+	require.Equal(t, []driver.JMReaderTag{{Name: "Visible", Path: "/标签/Visible"}}, m.TagLinks)
+	aliasUser := *user
+	aliasUser.BasePath = "/fixture/work"
+	restricted := manifest("client")
+	restricted.TagLinks = []driver.JMReaderTag{{Name: "Visible", Path: "/标签/Visible"}}
+	require.NoError(t, prepareJMReader(c, &aliasUser, "/fixture/work/allowed", "secret", restricted))
+	require.Empty(t, restricted.TagLinks)
 	m = manifest("server")
 	require.NoError(t, prepareJMReader(c, user, "/fixture/work/allowed", "secret", m))
 	require.Contains(t, m.Pages[0].URL, "/d/fixture/work/allowed/0001.png?sign=")

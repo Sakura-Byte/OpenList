@@ -27,7 +27,7 @@ func (d *JMComic) CheckContentPath(p string) error {
 	}
 	switch strings.ToLower(path.Ext(p)) {
 	case ".jpg", ".jpeg", ".png", ".webp", ".gif":
-		return fmt.Errorf("%w: JMComic client mode supports the web reader only; select server mode for image downloads", errs.NotSupport)
+		return fmt.Errorf("%w: JMComic client mode supports the web reader and browser exports; select server mode for filesystem image downloads", errs.NotSupport)
 	}
 	return nil
 }
@@ -74,14 +74,35 @@ func (d *JMComic) Other(ctx context.Context, args model.OtherArgs) (any, error) 
 		return nil, e
 	}
 	dt, e := d.loadDetail(c, a, opts.Refresh && o.chapterID == "", true)
-	if e != nil {
+	missing := errors.Is(e, errNoAlbumDetail) && o.chapterID == ""
+	if missing {
+		if a.Detail != nil {
+			dt = *a.Detail
+		} else {
+			dt = detail{ID: a.Album.ID, Name: a.Album.Name}
+			if a.Album.Author != "" {
+				dt.Authors = []string{a.Album.Author}
+			}
+		}
+	} else if e != nil {
 		return nil, e
+	}
+	if d.coverURL(a.Album) == "" && (a.Album.Image == "" || strings.HasPrefix(a.Album.Image, "/")) {
+		// Cached details may predate the image-host cache. Bootstrap metadata
+		// once on explicit reader access; ordinary lists never fetch settings.
+		_ = d.ensureSession(c, true)
 	}
 	albumPath := o.Path
 	if o.chapterID != "" {
 		albumPath = path.Dir(o.Path)
 	}
-	r := &driver.JMReaderManifest{Source: d.fingerprint, Mode: d.Mode, AlbumID: o.albumID, ChapterID: o.chapterID, AlbumPath: albumPath, Title: a.Album.Name, Description: dt.Description, Authors: dt.Authors, Tags: dt.Tags, Date: a.Album.Date, Updated: int64(a.Album.Updated), Cover: validImageURL(a.Album.Image), Chapters: []driver.JMReaderChapter{}, Pages: []driver.JMReaderPage{}}
+	r := &driver.JMReaderManifest{Source: d.fingerprint, Mode: d.Mode, AlbumID: o.albumID, ChapterID: o.chapterID, AlbumPath: albumPath, Title: a.Album.Name, Description: dt.Description, Authors: dt.Authors, Tags: dt.Tags, Date: a.Album.Date, Updated: int64(a.Album.Updated), Cover: d.coverURL(a.Album), Chapters: []driver.JMReaderChapter{}, Pages: []driver.JMReaderPage{}}
+	r.Unavailable = missing
+	for _, tag := range dt.Tags {
+		if strings.TrimSpace(tag) != "" {
+			r.TagLinks = append(r.TagLinks, driver.JMReaderTag{Name: tag, Path: tagPath(tag)})
+		}
+	}
 	for i, ch := range dt.Series {
 		r.Chapters = append(r.Chapters, driver.JMReaderChapter{ID: string(ch.ID), Name: ch.Name, Path: path.Join(albumPath, ch.name(i))})
 	}

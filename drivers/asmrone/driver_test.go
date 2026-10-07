@@ -73,7 +73,7 @@ func TestPermanentTracksAndCachedTraversal(t *testing.T) {
 	require.EqualValues(t, 0, requests.Load())
 	_, err = d.List(context.Background(), root, model.ListArgs{Refresh: true})
 	require.NoError(t, err)
-	dir, err := d.Get(context.Background(), "/"+cw.name())
+	dir, err := d.Get(context.Background(), cw.path())
 	require.NoError(t, err)
 	const callers = 12
 	var wg sync.WaitGroup
@@ -85,7 +85,7 @@ func TestPermanentTracksAndCachedTraversal(t *testing.T) {
 	}
 	wg.Wait()
 	require.EqualValues(t, 1, requests.Load())
-	obj, err := d.Get(context.Background(), "/"+cw.name()+"/track.mp3")
+	obj, err := d.Get(context.Background(), cw.path()+"/track.mp3")
 	require.NoError(t, err)
 	require.EqualValues(t, 123, obj.GetSize())
 	// Close and reopen the actual SQLite cache with the same storage and URL.
@@ -168,7 +168,7 @@ func TestCatalogIncrementalRenameRemovalAndRecovery(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Renamed", w.Title)
 	require.True(t, w.HasTracks)
-	_, err = d.Get(context.Background(), "/RJ000001 One")
+	_, err = d.Get(context.Background(), "/RJ000000~RJ009999/RJ000001 One")
 	require.Error(t, err)
 	mu.Lock()
 	works = works[:1]
@@ -225,7 +225,7 @@ func TestProxyRecoveryPreservesRangeAndHead(t *testing.T) {
 	defer server.Close()
 	d := newTestDriver(t, server.URL, t.TempDir())
 	cw := seedWork(t, d, 7, "Audio")
-	obj, err := d.Get(context.Background(), "/"+cw.name()+"/audio.mp3")
+	obj, err := d.Get(context.Background(), cw.path()+"/audio.mp3")
 	require.NoError(t, err)
 	broken.Store(true)
 	link, err := d.Link(context.Background(), obj, model.LinkArgs{Redirect: true})
@@ -266,7 +266,7 @@ func TestReadmeAndDuplicateNames(t *testing.T) {
 	require.Equal(t, "untitled", nodes[3].Title)
 	d := newTestDriver(t, "http://127.0.0.1:1", t.TempDir())
 	w := seedWork(t, d, 8, "Info")
-	obj, err := d.Get(driver.WithCachedTraversal(context.Background()), "/"+w.name()+"/README.md")
+	obj, err := d.Get(driver.WithCachedTraversal(context.Background()), w.path()+"/README.md")
 	require.NoError(t, err)
 	link, err := d.Link(driver.WithCachedTraversal(context.Background()), obj, model.LinkArgs{})
 	require.NoError(t, err)
