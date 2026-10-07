@@ -155,6 +155,8 @@ func admin(g *gin.RouterGroup) {
 	storage.POST("/load_all", handles.LoadAllStorages)
 	storage.GET("/asmrone/status", handles.ASMRONEStatus)
 	storage.POST("/asmrone/action", handles.ASMRONEAction)
+	storage.GET("/jmcomic/status", handles.JMComicStatus)
+	storage.POST("/jmcomic/action", handles.JMComicAction)
 
 	driver := g.Group("/driver")
 	driver.GET("/list", handles.ListDriverInfo)

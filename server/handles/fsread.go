@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
@@ -65,17 +66,19 @@ type ObjResp struct {
 	HashInfoStr  string                     `json:"hashinfo"`
 	HashInfo     map[*utils.HashType]string `json:"hash_info"`
 	MountDetails *model.StorageDetails      `json:"mount_details,omitempty"`
+	Reader       *model.ReaderInfo          `json:"reader,omitempty"`
 }
 
 type FsListResp struct {
-	Content            []ObjResp `json:"content"`
-	Total              int64     `json:"total"`
-	Readme             string    `json:"readme"`
-	Header             string    `json:"header"`
-	Write              bool      `json:"write"`
-	WriteContentBypass bool      `json:"write_content_bypass"`
-	Provider           string    `json:"provider"`
-	DirectUploadTools  []string  `json:"direct_upload_tools,omitempty"`
+	Content            []ObjResp         `json:"content"`
+	Total              int64             `json:"total"`
+	Readme             string            `json:"readme"`
+	Header             string            `json:"header"`
+	Write              bool              `json:"write"`
+	WriteContentBypass bool              `json:"write_content_bypass"`
+	Provider           string            `json:"provider"`
+	DirectUploadTools  []string          `json:"direct_upload_tools,omitempty"`
+	Reader             *model.ReaderInfo `json:"reader,omitempty"`
 }
 
 func FsListSplit(c *gin.Context) {
@@ -126,6 +129,16 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		browseError(c, err)
 		return
 	}
+	var reader *model.ReaderInfo
+	if sd, actualPath, e := op.GetStorageAndActualPath(reqPath); e == nil {
+		if rd, ok := sd.(driver.ReaderDirectory); ok {
+			reader, e = rd.DirectoryReader(c.Request.Context(), actualPath)
+			if e != nil {
+				browseError(c, e)
+				return
+			}
+		}
+	}
 	total, objs := pagination(objs, &req.PageReq)
 	provider := "unknown"
 	var directUploadTools []string
@@ -144,6 +157,7 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 		WriteContentBypass: common.CanWriteContentBypassUserPerms(meta, reqPath),
 		Provider:           provider,
 		DirectUploadTools:  directUploadTools,
+		Reader:             reader,
 	})
 	if req.Refresh {
 		updatesite.NotifyCatalogChanged(reqPath, updatesite.SourceRefresh, updatesite.ReasonRefresh, false, c.GetString("X-Request-Id"))
@@ -265,6 +279,7 @@ func toObjsResp(objs []model.Obj, parent string, encrypt bool, user *model.User,
 			Thumb:        thumb,
 			Type:         utils.GetObjType(obj.GetName(), obj.IsDir()),
 			MountDetails: mountDetails,
+			Reader:       model.GetReaderInfo(obj),
 		})
 	}
 	return resp
@@ -399,6 +414,7 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 			Type:         utils.GetFileType(obj.GetName()),
 			Thumb:        thumb,
 			MountDetails: mountDetails,
+			Reader:       model.GetReaderInfo(obj),
 		},
 		RawURL:   rawURL,
 		Readme:   getReadme(meta, reqPath),
@@ -457,6 +473,12 @@ func FsOther(c *gin.Context) {
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
+	}
+	if manifest, ok := res.(*driver.JMReaderManifest); ok {
+		if err := prepareJMReader(c, user, req.Path, req.Password, manifest); err != nil {
+			common.ErrorResp(c, err, 403)
+			return
+		}
 	}
 	common.SuccessResp(c, res)
 }

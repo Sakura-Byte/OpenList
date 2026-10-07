@@ -29,6 +29,12 @@ func Down(c *gin.Context) {
 		return
 	}
 	if common.ShouldProxy(storage, filename) {
+		if guard, ok := storage.(driver.ContentGuard); ok {
+			if err := guard.CheckContentPath(rawPath); err != nil {
+				common.ErrorPage(c, err, http.StatusNotImplemented)
+				return
+			}
+		}
 		Proxy(c)
 		return
 	} else {
@@ -64,6 +70,12 @@ func Proxy(c *gin.Context) {
 		return
 	}
 	if canProxy(storage, filename) {
+		if guard, ok := storage.(driver.ContentGuard); ok {
+			if err := guard.CheckContentPath(rawPath); err != nil {
+				common.ErrorPage(c, err, http.StatusNotImplemented)
+				return
+			}
+		}
 		user, _ := c.Request.Context().Value(conf.UserKey).(*model.User)
 		if _, ok := c.GetQuery("d"); !ok {
 			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath, user, ip); url != "" {

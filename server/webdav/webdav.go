@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
+	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
@@ -240,6 +241,14 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	if !common.CanAccess(user, meta, reqPath, password) {
 		return http.StatusForbidden, errs.PermissionDenied
 	}
+	storage, storageErr := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	if storageErr == nil {
+		if guard, ok := storage.(driver.ContentGuard); ok {
+			if err := guard.CheckContentPath(reqPath); err != nil {
+				return http.StatusNotImplemented, err
+			}
+		}
+	}
 	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
 		return http.StatusNotFound, err
@@ -253,8 +262,10 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 		return http.StatusMethodNotAllowed, nil
 	}
 	// Let ServeContent determine the Content-Type header.
-	storage, _ := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
-	if storage.GetStorage().Webdav302() {
+	if storageErr != nil {
+		return http.StatusNotFound, storageErr
+	}
+	if storage.GetStorage().Webdav302() && !storage.Config().MustProxy() {
 		link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{IP: utils.ClientIP(r), Header: r.Header, Redirect: true})
 		if err != nil {
 			return http.StatusInternalServerError, err
@@ -737,6 +748,9 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 	ctx := r.Context()
 	userAgent := r.Header.Get("User-Agent")
 	ctx = context.WithValue(ctx, conf.UserAgentKey, userAgent)
+	if depth := r.Header.Get("Depth"); depth == "" || depth == "infinity" {
+		ctx = driver.WithCachedTraversal(ctx)
+	}
 	user := ctx.Value(conf.UserKey).(*model.User)
 	password, _ := ctx.Value(conf.MetaPassKey).(string)
 	reqPath, err = user.JoinPath(reqPath)
