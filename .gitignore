@@ -10,6 +10,8 @@ output/
 *.so
 *.dylib
 *.db
+*.db-wal
+*.db-shm
 *.bin
 
 # Test binary, built with `go test -c`
@@ -33,4 +35,8 @@ output/
 
 .VSCodeCounter
 .worktrees
+
+# Local demos, build/test output and browser automation artifacts
+/artifacts/
+/.playwright-mcp/
 
