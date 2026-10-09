@@ -145,8 +145,9 @@ func FsList(c *gin.Context, req *ListReq, user *model.User) {
 	total, objs := pagination(objs, &req.PageReq)
 	provider := "unknown"
 	var directUploadTools []string
-	if canWriteContentAtPath {
-		if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
+	if storage, err := fs.GetStorage(reqPath, &fs.GetStoragesArgs{}); err == nil {
+		provider = storage.Config().Name
+		if canWriteContentAtPath {
 			directUploadTools = op.GetDirectUploadTools(storage)
 		}
 	}

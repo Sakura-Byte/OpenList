@@ -147,7 +147,7 @@ type object struct {
 
 func (o *object) Thumb() string { return o.cover }
 func workObject(w cachedWork) *object {
-	return &object{Object: model.Object{ID: strconv.FormatInt(int64(w.ID), 10), Name: w.name(), Path: w.path(), IsFolder: true, Modified: w.modified()}, workID: int64(w.ID), cover: w.Thumbnail}
+	return &object{Object: model.Object{ID: strconv.FormatInt(int64(w.ID), 10), Name: w.name(), Path: w.path(), IsFolder: true, Modified: w.modified()}, workID: int64(w.ID), cover: w.cover()}
 }
 func rangeObject(info rangeInfo) *object {
 	obj := &object{Object: model.Object{ID: "range:" + info.Name, Name: info.Name, Path: "/" + info.Name, IsFolder: true}}

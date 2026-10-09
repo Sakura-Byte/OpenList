@@ -80,13 +80,17 @@ func (w work) rangeName() string {
 	return fmt.Sprintf("RJ%0*d~RJ%0*d", width, start, width, start+9999)
 }
 func (w work) modified() time.Time { t, _ := time.Parse("2006-01-02", w.Created); return t }
+// cover prefers the 560x420 main image; the sample image is only 100x100.
+func (w work) cover() string {
+	if w.Cover != "" {
+		return w.Cover
+	}
+	return w.Thumbnail
+}
 func (w work) readme() []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", w.Title)
-	cover := w.Cover
-	if cover == "" {
-		cover = w.Thumbnail
-	}
+	cover := w.cover()
 	if cover != "" {
 		// The frontend classifies the raw Markdown destination before parsing.
 		// Angle wrappers look like local paths; encode delimiters instead.
