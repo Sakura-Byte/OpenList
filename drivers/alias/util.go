@@ -101,7 +101,9 @@ func (d *Alias) link(ctx context.Context, reqPath string, args model.LinkArgs) (
 	if err != nil {
 		return nil, nil, err
 	}
-	if args.Redirect && common.ShouldProxy(storage, stdpath.Base(reqPath)) {
+	// the admin link API is consumed by external download workers, which need the
+	// backend's own link (URL + headers) rather than a /p proxy URL on this server
+	if args.Redirect && args.Type != model.LinkTypeAdminGetLink && common.ShouldProxy(storage, stdpath.Base(reqPath)) {
 		return nil, nil, nil
 	}
 	return op.Link(ctx, storage, reqActualPath, args)
