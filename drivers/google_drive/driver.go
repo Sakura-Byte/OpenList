@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -13,6 +15,13 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	"github.com/go-resty/resty/v2"
+)
+
+const (
+	// Google access tokens are valid for one hour.
+	accessTokenLifetime = time.Hour
+	linkCacheMargin     = 5 * time.Minute
+	maxLinkCacheTTL     = 30 * time.Minute
 )
 
 type GoogleDrive struct {
@@ -24,6 +33,7 @@ type GoogleDrive struct {
 	listRMu                sync.Mutex
 	listRGrouping          int
 	listREmpties           map[string]struct{}
+	tokenIssuedAt          atomic.Int64
 }
 
 func (d *GoogleDrive) Config() driver.Config {
@@ -66,6 +76,9 @@ func (d *GoogleDrive) Link(ctx context.Context, file model.Obj, args model.LinkA
 		Header: http.Header{
 			"Authorization": []string{"Bearer " + d.AccessToken},
 		},
+	}
+	if ttl := d.linkCacheTTL(); ttl > 0 {
+		link.Expiration = &ttl
 	}
 	return &link, nil
 }

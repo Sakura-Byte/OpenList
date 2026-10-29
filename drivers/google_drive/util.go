@@ -92,6 +92,7 @@ func (d *GoogleDrive) refreshToken() error {
 			return fmt.Errorf("empty token returned from official API, a wrong refresh token may have been used")
 		}
 		d.AccessToken = resp.AccessToken
+		d.markTokenIssued()
 		d.RefreshToken = resp.RefreshToken
 		op.MustSaveDriverStorage(d)
 		return nil
@@ -190,6 +191,7 @@ func (d *GoogleDrive) refreshToken() error {
 			return errors.New(e.Error)
 		}
 		d.AccessToken = resp.AccessToken
+		d.markTokenIssued()
 		return nil
 	} else if os.IsExist(gdsaFileErr) {
 		return gdsaFileErr
@@ -212,7 +214,25 @@ func (d *GoogleDrive) refreshToken() error {
 		return errors.New(e.Error)
 	}
 	d.AccessToken = resp.AccessToken
+	d.markTokenIssued()
 	return nil
+}
+
+// markTokenIssued records when the current access token was obtained so that
+// cached download links never outlive the token embedded in their headers.
+func (d *GoogleDrive) markTokenIssued() {
+	d.tokenIssuedAt.Store(time.Now().Unix())
+}
+
+// linkCacheTTL returns how long a link carrying the current access token may be
+// cached, or 0 when the token is too close to expiry to be worth caching.
+func (d *GoogleDrive) linkCacheTTL() time.Duration {
+	issued := d.tokenIssuedAt.Load()
+	if issued == 0 {
+		return 0
+	}
+	remaining := accessTokenLifetime - linkCacheMargin - time.Since(time.Unix(issued, 0))
+	return min(remaining, maxLinkCacheTTL)
 }
 
 func (d *GoogleDrive) request(url string, method string, callback base.ReqCallback, resp interface{}) ([]byte, error) {
