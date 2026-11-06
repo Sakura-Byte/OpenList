@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenListTeam/OpenList/v4/internal/gdlimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
@@ -89,6 +90,17 @@ func FairQueueAcquire(c *gin.Context) {
 	}
 	if user == nil {
 		common.ErrorStrResp(c, "user required (sign or username)", http.StatusBadRequest)
+		return
+	}
+
+	if decision := gdlimit.Admit(c.Request.Context(), ip, req.Path); !decision.Allowed {
+		common.SuccessResp(c, gin.H{
+			"result":   "rejected",
+			"reason":   gdlimit.ReasonIPDailyLimit,
+			"limit":    decision.Limit,
+			"used":     decision.Used,
+			"reset_at": decision.ResetAt.Unix(),
+		})
 		return
 	}
 

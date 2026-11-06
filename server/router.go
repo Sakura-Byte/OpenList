@@ -193,6 +193,7 @@ func admin(g *gin.RouterGroup) {
 	fairqueue.POST("/abandon", handles.FairQueueAbandon)
 	fairqueue.POST("/activate", handles.FairQueueActivate)
 	fairqueue.POST("/release", handles.FairQueueRelease)
+	g.GET("/gd_download/top", handles.GDDownloadTop)
 	setting.POST("/set_guangyapan", handles.SetGuangYaPan)
 
 	// retain /admin/task API to ensure compatibility with legacy automation scripts

@@ -257,6 +257,12 @@ type DirectUploader interface {
 	GetDirectUploadInfo(ctx context.Context, tool string, dstDir model.Obj, fileName string, fileSize int64) (any, error)
 }
 
+// BackingPathResolver is implemented by drivers that only front other paths.
+type BackingPathResolver interface {
+	// ResolveBackingPath returns the full path that reads of path are served from.
+	ResolveBackingPath(ctx context.Context, path string) (string, error)
+}
+
 type PublicPathResolver interface {
 	// ResolvePublicPath converts a backend/raw path into a user-visible path.
 	// It returns false when the raw path is not covered by the driver.

@@ -262,6 +262,10 @@ func Link(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if link.HTTPClient == nil {
 			link.HTTPClient = base.TransferClientFor(storage)
 		}
+		// an Alias passes through the link of the storage behind it; keep that one
+		if link.Storage == "" {
+			link.Storage = storage.GetStorage().MountPath
+		}
 		ol, err := admitLink(link, file)
 		if err != nil {
 			return nil, err

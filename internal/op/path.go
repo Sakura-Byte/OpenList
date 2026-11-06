@@ -30,6 +30,18 @@ func GetStorageAndActualPath(rawPath string) (storage driver.Driver, actualPath 
 	return
 }
 
+// PeekStorageAndActualPath is GetStorageAndActualPath without advancing the
+// balanced-storage counter, for callers that only inspect the storage.
+func PeekStorageAndActualPath(rawPath string) (driver.Driver, string, error) {
+	rawPath = utils.FixAndCleanPath(rawPath)
+	storages := getStoragesByPath(rawPath)
+	if len(storages) == 0 {
+		return nil, "", errs.NewErr(errs.StorageNotFound, "rawPath: %s", rawPath)
+	}
+	mountPath := utils.GetActualMountPath(storages[0].GetStorage().MountPath)
+	return storages[0], utils.FixAndCleanPath(strings.TrimPrefix(rawPath, mountPath)), nil
+}
+
 // GetStorageVirtualMountPath returns the deterministic virtual mount path
 // without advancing the balanced-storage counter.
 func GetStorageVirtualMountPath(rawPath string) (string, error) {

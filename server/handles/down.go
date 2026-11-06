@@ -2,13 +2,16 @@ package handles
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	stdpath "path"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/gdlimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/ratelimit"
@@ -80,6 +83,13 @@ func Proxy(c *gin.Context) {
 		if _, ok := c.GetQuery("d"); !ok {
 			if url := common.GenerateDownProxyURL(storage.GetStorage(), rawPath, user, ip); url != "" {
 				c.Redirect(302, url)
+				return
+			}
+		}
+		if c.Query("type") != "thumb" {
+			if decision := gdlimit.Admit(c.Request.Context(), ip, rawPath); !decision.Allowed {
+				common.ErrorPage(c, fmt.Errorf("this IP reached the limit of %d Google Drive downloads per 24 hours, try again after %s",
+					decision.Limit, decision.ResetAt.UTC().Format(time.RFC3339)), http.StatusTooManyRequests)
 				return
 			}
 		}

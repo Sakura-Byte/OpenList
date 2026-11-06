@@ -10,6 +10,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
+	"github.com/OpenListTeam/OpenList/v4/internal/gdlimit"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/search"
@@ -304,6 +305,8 @@ type FsGetResp struct {
 	Header   string    `json:"header"`
 	Provider string    `json:"provider"`
 	Related  []ObjResp `json:"related"`
+	// DownloadQuota is set only for files stored on Google Drive
+	DownloadQuota *gdlimit.Quota `json:"download_quota,omitempty"`
 }
 
 func FsGetSplit(c *gin.Context) {
@@ -410,6 +413,10 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 	parentMeta, _ := op.GetNearestMeta(parentPath)
 	thumb, _ := model.GetThumb(obj)
 	mountDetails, _ := model.GetStorageDetails(obj)
+	var downloadQuota *gdlimit.Quota
+	if !obj.IsDir() {
+		downloadQuota = gdlimit.CurrentQuota(c.Request.Context(), ip, reqPath)
+	}
 	common.SuccessResp(c, FsGetResp{
 		SearchAvailable: search.Available(reqPath),
 		ObjResp: ObjResp{
@@ -426,11 +433,12 @@ func FsGet(c *gin.Context, req *FsGetReq, user *model.User) {
 			MountDetails: mountDetails,
 			Reader:       model.GetReaderInfo(obj),
 		},
-		RawURL:   rawURL,
-		Readme:   getReadme(meta, reqPath),
-		Header:   getHeader(meta, reqPath),
-		Provider: provider,
-		Related:  toObjsResp(related, parentPath, isEncrypt(parentMeta, parentPath), user, ip),
+		RawURL:        rawURL,
+		Readme:        getReadme(meta, reqPath),
+		Header:        getHeader(meta, reqPath),
+		Provider:      provider,
+		Related:       toObjsResp(related, parentPath, isEncrypt(parentMeta, parentPath), user, ip),
+		DownloadQuota: downloadQuota,
 	})
 	if !obj.IsDir() {
 		updatesite.NotifyContentAccess(reqPath, obj, updatesite.AccessKindDetail, updatesite.ActorKey(user.Username, ip), c.GetString("X-Request-Id"))

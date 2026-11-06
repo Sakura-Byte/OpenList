@@ -4,12 +4,14 @@ import (
 	"fmt"
 	stdpath "path"
 	"strings"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/sign"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/pkg/generic"
@@ -17,10 +19,17 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/server/common"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 type MkdirOrLinkReq struct {
 	Path string `json:"path" form:"path"`
+}
+
+type LinkReq struct {
+	MkdirOrLinkReq
+	// Avoid is the balanced storage whose link the download proxy just saw fail
+	Avoid string `json:"avoid" form:"avoid"`
 }
 
 func FsMkdir(c *gin.Context) {
@@ -510,7 +519,7 @@ func FsRemoveEmptyDirectory(c *gin.Context) {
 
 // Link return real link, just for proxy program, it may contain cookie, so just allowed for admin
 func Link(c *gin.Context) {
-	var req MkdirOrLinkReq
+	var req LinkReq
 	if err := c.ShouldBind(&req); err != nil {
 		common.ErrorResp(c, err, 400)
 		return
@@ -520,7 +529,13 @@ func Link(c *gin.Context) {
 	// why need not join base_path? because it's always the full path
 	rawPath := req.Path
 	ip, _ := c.Request.Context().Value(conf.ClientIPKey).(string)
-	storage, err := fs.GetStorage(rawPath, &fs.GetStoragesArgs{})
+	if utils.IsBalance(req.Avoid) {
+		minutes := setting.GetInt(conf.GDBalanceCooldownMinutes, 10)
+		op.CoolBalancedStorage(req.Avoid, time.Duration(minutes)*time.Minute)
+		log.Infof("balance storage %s cooling for %d minutes", req.Avoid, minutes)
+	}
+	// fs.Link advances the balance counter; peeking keeps it to one step per link
+	storage, _, err := op.PeekStorageAndActualPath(rawPath)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return

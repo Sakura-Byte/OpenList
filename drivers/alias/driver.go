@@ -159,6 +159,22 @@ func (d *Alias) Get(ctx context.Context, path string) (model.Obj, error) {
 	return nil, errs.ObjectNotFound
 }
 
+// ResolveBackingPath returns the path behind the alias that reads of path use.
+func (d *Alias) ResolveBackingPath(ctx context.Context, path string) (string, error) {
+	roots, sub := d.getRootsAndPath(path)
+	for _, root := range roots {
+		rawPath := stdpath.Join(root, sub)
+		storage, actualPath, err := op.PeekStorageAndActualPath(rawPath)
+		if err != nil {
+			continue
+		}
+		if _, err := op.Get(ctx, storage, actualPath); err == nil {
+			return rawPath, nil
+		}
+	}
+	return "", errs.ObjectNotFound
+}
+
 func (d *Alias) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	dirs, ok := dir.(BalancedObjs)
 	if !ok {

@@ -36,9 +36,10 @@ type Link struct {
 	Expiration *time.Duration // local cache expiration; not transferred by Clone
 
 	//for accelerating request, use multi-thread downloading
-	Concurrency   int   `json:"concurrency"`
-	PartSize      int   `json:"part_size"`
-	ContentLength int64 `json:"content_length"` // 转码视频、缩略图
+	Concurrency   int    `json:"concurrency"`
+	PartSize      int    `json:"part_size"`
+	ContentLength int64  `json:"content_length"`    // 转码视频、缩略图
+	Storage       string `json:"storage,omitempty"` // mount path of the storage that issued the link
 
 	utils.SyncClosers `json:"-"`
 	// 如果SyncClosers中的资源被关闭后Link将不可用，则此值应为 true
@@ -55,6 +56,7 @@ func (l *Link) Clone() *Link {
 		Concurrency:      l.Concurrency,
 		PartSize:         l.PartSize,
 		ContentLength:    l.ContentLength,
+		Storage:          l.Storage,
 		SyncClosers:      utils.NewSyncClosers(l),
 		RequireReference: l.RequireReference,
 	}

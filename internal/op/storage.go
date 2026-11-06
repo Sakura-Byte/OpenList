@@ -505,9 +505,36 @@ func GetBalancedStorage(path string) driver.Driver {
 		virtualPath := utils.GetActualMountPath(storages[0].GetStorage().MountPath)
 		i, _ := balanceMap.LoadOrStore(virtualPath, 0)
 		i = (i + 1) % storageNum
+		// fall back to plain round robin when every storage is cooling down
+		for n := 0; n < storageNum; n++ {
+			candidate := (i + n) % storageNum
+			if !isBalanceCooling(storages[candidate].GetStorage().MountPath) {
+				i = candidate
+				break
+			}
+		}
 		balanceMap.Store(virtualPath, i)
 		return storages[i]
 	}
+}
+
+var balanceCooldown generic_sync.MapOf[string, time.Time]
+
+// CoolBalancedStorage makes GetBalancedStorage skip a balanced storage for d.
+func CoolBalancedStorage(mountPath string, d time.Duration) {
+	balanceCooldown.Store(utils.FixAndCleanPath(mountPath), time.Now().Add(d))
+}
+
+func isBalanceCooling(mountPath string) bool {
+	until, ok := balanceCooldown.Load(mountPath)
+	if !ok {
+		return false
+	}
+	if time.Now().After(until) {
+		balanceCooldown.Delete(mountPath)
+		return false
+	}
+	return true
 }
 
 var detailsG singleflight.Group[*model.StorageDetails]
